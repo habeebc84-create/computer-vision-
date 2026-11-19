@@ -180,7 +180,12 @@ export async function detectImageFileInBrowser(
   file: File,
   onProgress?: (loaded: number, total: number) => void,
 ): Promise<BrowserDetectResult> {
-  const bmp = await createImageBitmap(file)
+  let bmp: ImageBitmap
+  try {
+    bmp = await createImageBitmap(file)
+  } catch {
+    throw new Error('This image could not be read in the browser — it may be damaged or in a format this browser cannot decode (HEIC photos need converting to JPG first).')
+  }
   try {
     return await detectInBrowser(bmp, bmp.width, bmp.height, onProgress)
   } finally {

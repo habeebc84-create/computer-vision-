@@ -76,7 +76,13 @@ export default function ImageDetect() {
 
   const pick = (f: File | undefined) => {
     if (!f) return
-    if (!/image\/(jpeg|png)/.test(f.type)) { setError('Please choose a JPG or PNG image.'); return }
+    // Phones often save HEIC/HEIF, which browsers (except Safari) cannot
+    // decode — say so plainly instead of the generic format error.
+    if (/heic|heif/i.test(f.type) || /\.hei[cf]$/i.test(f.name)) {
+      setError('This photo is HEIC (the iPhone format) — browsers cannot read it here. Please convert it to JPG and try again.')
+      return
+    }
+    if (!/image\/(jpeg|png|webp|gif|bmp|avif)/.test(f.type)) { setError('Please choose a JPG, PNG, WebP, GIF, BMP or AVIF image.'); return }
     setFile(f); setPreview(URL.createObjectURL(f)); setResult(null); setError(''); setSource(null)
   }
   const run = async () => {
@@ -142,8 +148,8 @@ export default function ImageDetect() {
         <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-10 text-center hover:border-sky-500/50">
           <ImagePlus size={28} className="text-sky-400" />
           <span className="mt-2 font-semibold">Drop an image here, or click to browse</span>
-          <span className="text-xs text-slate-400">JPG / PNG · up to 20 MB · processed by the real YOLOv8 model</span>
-          <input type="file" accept="image/jpeg,image/png" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+          <span className="text-xs text-slate-400">JPG / PNG / WebP / GIF / BMP / AVIF · up to 20 MB · processed by the real YOLOv8 model</span>
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="hidden" onChange={e => pick(e.target.files?.[0])} />
         </label>
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
