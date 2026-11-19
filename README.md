@@ -330,3 +330,26 @@ into `dataset/labels/all/` and the matching images into
   target, not a guarantee — CPU inference on large frames is slower.
 - Training metrics are read from the trainer's own `results.csv`; if a run
   fails, the real error is shown in the log and status, not a fake progress bar.
+
+## Host the backend on Hugging Face (free)
+
+The backend runs on Hugging Face Spaces (Docker SDK, free CPU tier) so the
+live Vercel frontend can reach it. The repo already contains a `Dockerfile`
+(two-stage: Node builds the frontend, Python 3.12 runs FastAPI on `$PORT`,
+default 7860 on Spaces).
+
+1. Create a free Hugging Face account, then a fine-grained access token with
+   **write** access to Spaces (Settings → Access Tokens).
+2. Create a Space with SDK **Docker** (e.g. `object-detection-backend`).
+3. Push this repo's files into the Space repo (the `Dockerfile` must be at
+   the root). The Space builds the image and starts the backend.
+4. When the Space is running, copy its URL (e.g.
+   `https://<user>-object-detection-backend.hf.space`) and set it as
+   `VITE_API_URL` in the Vercel project, then redeploy the frontend.
+   The site then shows "Backend connected" and detection, training, video
+   and history all work live.
+
+Notes: Space storage is ephemeral — detection history and uploads reset when
+the Space restarts. Training on the free CPU tier is slow; use small
+datasets (COCO8/COCO128) and few epochs. The YOLO-World model downloads
+(~25 MB) on first open-vocab use.

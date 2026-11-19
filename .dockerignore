@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+frontend/node_modules/
+frontend/dist/
+models/
+database/
+outputs/
+uploads/
+runs/
+downloads/
+weights/
+*.log
+.DS_Store
