@@ -19,7 +19,7 @@ export default function Dataset() {
   const [dsBusy, setDsBusy] = useState('')
 
   const refreshCatalog = async () => {
-    try { setCatalog(await api.dsCatalog()) } catch { /* backend offline — banner in Layout explains */ }
+    try { setCatalog(await api.dsCatalog()) } catch { /* Keep the last catalog if the request fails. */ }
   }
   useEffect(() => { refreshCatalog() }, [])
   // Poll only while a download is in progress.
