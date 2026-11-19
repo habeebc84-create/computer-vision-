@@ -25,6 +25,7 @@ BASE = Path(__file__).resolve().parent.parent
 OUT_IMG = BASE / "outputs" / "images"; OUT_VID = BASE / "outputs" / "videos"
 OUT_REP = BASE / "outputs" / "reports"; UP = BASE / "uploads"
 for d in (OUT_IMG, OUT_VID, OUT_REP, UP): d.mkdir(parents=True, exist_ok=True)
+ensure_dirs()  # StaticFiles requires the dataset directory to exist at startup.
 
 app = FastAPI(title="Real-Time Object Detection System", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])

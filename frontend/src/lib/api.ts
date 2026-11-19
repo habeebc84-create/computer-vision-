@@ -34,18 +34,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     // Network failure (backend down, wrong VITE_API_URL, CORS) — never show a stack trace.
     throw new Error(BACKEND_OFFLINE_NET)
   }
+
   const text = await r.text()
   if (!r.ok) {
     // Real backend errors are JSON with `detail` — keep those verbatim.
     const ct = r.headers.get('content-type') || ''
     if (ct.includes('application/json')) {
-      try {
-        const data = JSON.parse(text)
-        if (data.detail || data.message) throw new Error(String(data.detail || data.message))
-      } catch (e) {
-        // Not JSON after all — fall through to the friendly errors below.
-        void e
-      }
+      let data: any
+      try { data = JSON.parse(text) } catch { /* fall through to friendly errors */ }
+      if (data?.detail || data?.message) throw new Error(String(data.detail || data.message))
     }
     // A non-JSON error body (e.g. Vercel's 404 HTML page when no backend exists)
     // must never be surfaced as the error message.

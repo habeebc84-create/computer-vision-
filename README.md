@@ -154,6 +154,20 @@ npm run dev
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
 
+On headless Linux, Ultralytics also installs the GUI `opencv-python` package,
+which can override the headless build and fail with `libGL.so.1` missing.
+After installing the requirements, use the headless build instead:
+
+```bash
+pip uninstall -y opencv-python opencv-python-headless
+pip install --no-deps 'opencv-python-headless>=4.10,<5'
+```
+
+The first detection needs network access to GitHub's release assets to download
+`yolov8n.pt`. If downloads are blocked, obtain the official pretrained weights
+on a machine with access and place them at `models/yolov8n.pt`. Only load
+model files from a trusted source.
+
 ## Open-vocabulary detection (recognise any object)
 
 The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
