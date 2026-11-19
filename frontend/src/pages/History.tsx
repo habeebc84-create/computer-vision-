@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, Search, Trash2 } from 'lucide-react'
-import { api, HistoryRecord, toast } from '../lib/api'
+import { api, HistoryRecord, resolveUrl, toast } from '../lib/api'
 import { EmptyState } from '../components/ui'
 
 export default function History() {
@@ -41,7 +41,7 @@ export default function History() {
                 <td className="py-2">{(r.avg_conf * 100).toFixed(0)}%</td><td className="py-2">{r.fps?.toFixed(1)}</td>
                 <td className="py-2"><div className="flex gap-1">
                   <button className="btn-ghost !px-2 !py-1" onClick={() => setOpen(r)}>View</button>
-                  {r.output_path && <a className="btn-ghost !px-2 !py-1" href={`/${r.output_path}`} download><Download size={13} /></a>}
+                  {r.output_path && <a className="btn-ghost !px-2 !py-1" href={resolveUrl(`/${r.output_path}`)} download><Download size={13} /></a>}
                   <button className="btn-danger !px-2 !py-1" onClick={() => del(r.id)} aria-label={`Delete record ${r.id}`}><Trash2 size={13} /></button>
                 </div></td>
               </tr>))}
@@ -63,7 +63,7 @@ export default function History() {
             <div><dt className="text-slate-400">Model</dt><dd className="break-all">{open.model || '—'}</dd></div>
             <div><dt className="text-slate-400">Output file</dt><dd className="break-all">{open.output_path || '—'}</dd></div>
           </dl>
-          {open.output_path && <a className="btn-ghost mt-3" href={`/${open.output_path}`} download><Download size={15} /> Download output</a>}
+          {open.output_path && <a className="btn-ghost mt-3" href={resolveUrl(`/${open.output_path}`)} download><Download size={15} /> Download output</a>}
           <button className="btn-ghost ml-2 mt-3" onClick={() => setOpen(null)}>Close</button>
         </div>
       )}

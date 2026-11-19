@@ -78,6 +78,68 @@ Open **http://localhost:8000**. The first inference downloads `yolov8n.pt`
 (~6 MB, COCO 80 classes) from Ultralytics into `models/` — internet is
 required once for that download. The `.pt` file is git-ignored on purpose.
 
+## Why detection doesn't work on Vercel
+
+**Short version: Vercel hosts only the static frontend. There is no Python
+backend there, so every `/api/*` call fails.**
+
+This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
+backend. Vercel is a static/serverless host — it can serve the dashboard UI,
+but it cannot run the backend: PyTorch + Ultralytics are hundreds of MB (far
+over Vercel's serverless function size limit), training and video processing
+run for minutes (over the request timeout), and the backend keeps a model in
+memory and writes to SQLite/disk, which serverless functions don't do.
+
+What you see on a Vercel deploy: the dashboard loads, the header shows an
+amber **"Backend offline"** banner, and every detection/training/history
+action fails with a clear message instead of a wall of HTML — the frontend
+never pretends the backend is there.
+
+**To make a Vercel frontend actually detect objects, point it at a backend:**
+
+1. Host the backend on a persistent Python host — Render, Railway or Fly.io
+   (a web service running `python run.py`, with the repo's `requirements.txt`;
+   free tiers work for demos but are slow to wake and CPU-only).
+2. In `frontend/`, set the backend URL before building:
+   ```bash
+   # frontend/.env  (see frontend/.env.example)
+   VITE_API_URL=https://your-backend-host.example.com
+   ```
+   Or set `VITE_API_URL` as a Vercel environment variable for the project.
+3. Rebuild and redeploy the frontend (`npm run build`, then deploy) — Vite
+   bakes `VITE_API_URL` into the build at build time, so changing it requires
+   a fresh build. All API calls and all output/download links
+   (`/outputs/...`, `/dataset/...`) are then prefixed with that URL.
+4. Keep the backend URL reachable over HTTPS (a Vercel page served over
+   HTTPS cannot call an `http://` backend — the browser blocks mixed content).
+
+Running locally (`python run.py`) needs none of this: the backend serves the
+frontend itself on the same origin, and `VITE_API_URL` stays empty.
+
+## Built-in datasets (one-click download)
+
+Module 1 — Dataset has a **"Recommended datasets"** section with two official
+Ultralytics COCO samples, verified live (HTTP 200) — click **Download &
+import** and the backend downloads, verifies and imports them into
+`dataset/images/all/` + `dataset/labels/all/`, with class names set to the
+80 COCO classes. Then Split the dataset and train in Module 2 as usual.
+
+| Dataset | Images | Classes | Size | Licence |
+|---|---|---|---|---|
+| COCO128 | 128 | 80 (COCO) | ~6.7 MB | COCO 2017, CC BY 4.0 |
+| COCO8 | 8 (4 train / 4 val) | 80 (COCO) | ~0.4 MB | COCO 2017, CC BY 4.0 |
+
+- COCO128 — `https://ultralytics.com/assets/coco128.zip` — recommended for
+  real training: big enough to learn from, small enough to train on CPU.
+- COCO8 — `https://ultralytics.com/assets/coco8.zip` — tiny smoke test for
+  the download → split → train pipeline.
+- Source: Ultralytics (redirects to GitHub releases). No labels or images are
+  invented — the zips contain real COCO images and real YOLO txt labels.
+- Downloaded zips live in `downloads/` and imported files in
+  `dataset/images/all/` + `dataset/labels/all/` — all git-ignored, so they
+  are never committed. Re-downloading an imported dataset is skipped unless
+  you choose Re-download.
+
 For development with hot reload instead of the built frontend:
 
 ```powershell
@@ -105,6 +167,43 @@ The first detection needs network access to GitHub's release assets to download
 `yolov8n.pt`. If downloads are blocked, obtain the official pretrained weights
 on a machine with access and place them at `models/yolov8n.pt`. Only load
 model files from a trusted source.
+
+## Open-vocabulary detection (recognise any object)
+
+The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
+"person", "car", "dog" and 77 others. If you need **any** object, use
+**YOLO-World** (`yolov8s-worldv2.pt`, Ultralytics): it is an
+open-vocabulary detector, so you type the object names in plain English and
+it finds them — "red bus", "traffic light", "laptop", "cricket bat", anything
+you can name. No training and no dataset are needed for this.
+
+How to use it:
+
+1. **Image Detection** or **Live Detection** — switch the toggle to
+   **"Any object — type its name"** and type comma-separated object names
+   (e.g. `red bus, traffic light, dog`, up to 20), then run detection as
+   usual. Results show your prompted names, with the same boxes, confidence
+   and history records as COCO detection (history type `open-vocab`).
+2. Or pick **YOLOv8s-World v2** in **Settings → Model** — Image and Live
+   then start in Any-object mode automatically.
+3. API: `POST /api/detect/open-vocab/image` (multipart image + `classes`
+   form field, JSON array or comma-separated text) and
+   `POST /api/detect/open-vocab/frame` (live frames, no history record).
+   `GET /api/models/available` lists all selectable models.
+
+Notes and limits (honest):
+
+- The world weights (~25 MB) download once from Ultralytics on first use
+  into `models/` (git-ignored). Without internet the first open-vocab call
+  returns a clear 503 error — it never invents boxes.
+- Prompt wording matters: specific names ("red bus") work better than vague
+  ones ("thing"). It is slower and less accurate than a COCO model on the
+  classes that model was trained for, and it can occasionally mistake a
+  similar-looking object — always check the confidence and the box.
+- It does not "know every image in the world" — it matches your words
+  against what it sees using a vision-language model, so unusual or very
+  small objects may be missed. For a fixed set of objects you detect often,
+  a custom-trained model (Module 2) is still the more accurate choice.
 
 ## Using the app
 
@@ -148,12 +247,18 @@ into `dataset/labels/all/` and the matching images into
 | `GET /api/health` | Backend + model-loaded status |
 | `GET /api/model/status` | Loaded model, device, classes, thresholds |
 | `POST /api/model/load` `{path}` | Load a model file (e.g. `models/best.pt`) |
+| `GET /api/models/available` | Selectable models: yolov8n/s/m/x (COCO) + yolov8s-worldv2 (open-vocab) |
 | `POST /api/detect/image` | Multipart image → detections + annotated image URL |
+| `POST /api/detect/open-vocab/image` | Multipart image + `classes` (JSON array or comma text) → YOLO-World detections |
+| `POST /api/detect/open-vocab/frame` | Multipart JPEG frame + `classes` → YOLO-World detections (live, no history) |
 | `POST /api/detect/frame` | Multipart JPEG frame → detections (live webcam) |
 | `POST /api/detect/frame/save` | Same, plus records the frame in history |
 | `POST /api/video/start` | Multipart video → job id |
 | `GET /api/video/{id}` | Job progress / summary |
 | `GET /api/video/{id}/download` | Processed MP4 |
+| `GET /api/datasets` | Curated dataset catalog + download status |
+| `POST /api/datasets/{id}/download` | Download + import a built-in dataset (background) |
+| `GET /api/datasets/{id}/status` | Download/import progress |
 | `POST /api/dataset/upload` | Multi-image upload |
 | `POST /api/dataset/annotations/{name}` | Save YOLO boxes for an image |
 | `POST /api/dataset/split` `{train_pct}` | Split + write `data.yaml` |

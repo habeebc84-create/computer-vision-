@@ -10,11 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from detection import load_settings, manager, save_settings
+from detection import (AVAILABLE_MODELS, load_settings, manager, save_settings,
+                     validate_open_vocab_classes, world_manager)
 from dataset_manager import (ALLOWED, IMG_ALL, LBL_ALL, ensure_dirs, get_annotations,
                              get_classes, list_images, save_annotation, set_classes,
                              split_dataset, stats, export_zip)
 from model_training import job as train_job
+import datasets as builtin_datasets
 from video_processing import VideoJob
 from image_processing import decode_image, encode_jpeg
 import analytics, report_generator
@@ -51,6 +53,19 @@ def model_load(payload: dict):
         raise HTTPException(400, f"Could not load model: {e}")
     save_settings({"model_path": path})
     return manager.status()
+
+@app.get("/api/models/available")
+def models_available():
+    """Models the UI can choose: COCO (80 fixed classes) + YOLO-World
+    (open-vocabulary — any typed object). Includes per-model download state."""
+    out = []
+    for m in AVAILABLE_MODELS:
+        entry = dict(m)
+        entry["downloaded"] = (BASE / m["path"]).exists()
+        if m["kind"] == "world":
+            entry["loaded"] = world_manager.model is not None
+        out.append(entry)
+    return out
 
 @app.get("/api/settings")
 def get_settings(): return load_settings()
@@ -108,6 +123,67 @@ async def detect_frame(frame: UploadFile = File(...)):
     now = time.time(); _frame_times.append(now)
     while _frame_times and now - _frame_times[0] > 2: _frame_times.pop(0)
     out = _summary(dets, ms); out["fps"] = round(len(_frame_times)/2, 1) if len(_frame_times) > 1 else out["fps"]
+    return out
+
+def _parse_classes(raw: str):
+    """Form field `classes`: a JSON array ('["bus","dog"]') or comma-separated
+    text ('bus, dog'). Returns the validated prompt list."""
+    if raw is None:
+        raise HTTPException(400, "Provide object names in the 'classes' field.")
+    raw = raw.strip()
+    if not raw:
+        raise HTTPException(400, "Provide at least one object name to detect.")
+    parsed = raw
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            raise HTTPException(400, "Could not parse 'classes' as JSON or comma-separated text.")
+    try:
+        return validate_open_vocab_classes(parsed)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/detect/open-vocab/image")
+async def detect_open_vocab_image(file: UploadFile = File(...), classes: str = Form("")):
+    """Open-vocabulary image detection (YOLO-World): detect any object named
+    in `classes`. Real inference only — a missing/unreachable world model is
+    a clear 503, never invented boxes."""
+    prompts = _parse_classes(classes)
+    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
+        raise HTTPException(400, "Upload a JPG or PNG image.")
+    data = await file.read()
+    if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
+    try: img = decode_image(data)
+    except ValueError as e: raise HTTPException(400, str(e))
+    try: dets, ms = world_manager.detect_array(img, prompts)
+    except RuntimeError as e: raise HTTPException(503, str(e))
+    except Exception as e: raise HTTPException(503, f"Model error: {e}")
+    annotated = manager.annotate(img, dets)
+    name = f"{int(time.time())}_{Path(file.filename or 'image').stem}_world.jpg"
+    (OUT_IMG / name).write_bytes(encode_jpeg(annotated))
+    rid = analytics.record("open-vocab", dets, fps=1000/max(ms, .01), inference_ms=ms,
+                           output_path=f"outputs/images/{name}",
+                           model=world_manager.model_path or "models/yolov8s-worldv2.pt")
+    out = _summary(dets, ms)
+    out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}",
+                "original_name": file.filename, "prompts": prompts})
+    return out
+
+@app.post("/api/detect/open-vocab/frame")
+async def detect_open_vocab_frame(frame: UploadFile = File(...), classes: str = Form("")):
+    """Open-vocabulary live webcam frame. No history record (same as /api/detect/frame)."""
+    prompts = _parse_classes(classes)
+    data = await frame.read()
+    try: img = decode_image(data)
+    except ValueError as e: raise HTTPException(400, str(e))
+    try: dets, ms = world_manager.detect_array(img, prompts)
+    except RuntimeError as e: raise HTTPException(503, str(e))
+    except Exception as e: raise HTTPException(503, f"Model error: {e}")
+    now = time.time(); _frame_times.append(now)
+    while _frame_times and now - _frame_times[0] > 2: _frame_times.pop(0)
+    out = _summary(dets, ms); out["fps"] = round(len(_frame_times)/2, 1) if len(_frame_times) > 1 else out["fps"]
+    out["prompts"] = prompts
     return out
 
 @app.post("/api/detect/frame/save")
@@ -211,6 +287,25 @@ def ds_yaml():
 def ds_export():
     dest = OUT_REP / "dataset_export.zip"; export_zip(dest)
     return FileResponse(dest, media_type="application/zip", filename="dataset_export.zip")
+
+# ---------- Curated built-in datasets (one-click download) ----------
+@app.get("/api/datasets")
+def ds_catalog():
+    return builtin_datasets.catalog()
+
+@app.post("/api/datasets/{ds_id}/download")
+def ds_download(ds_id: str, force: bool = False):
+    try:
+        return builtin_datasets.start_download(ds_id, force=force)
+    except KeyError:
+        raise HTTPException(404, f"Unknown dataset: {ds_id}")
+
+@app.get("/api/datasets/{ds_id}/status")
+def ds_status(ds_id: str):
+    try:
+        return builtin_datasets.status(ds_id)
+    except KeyError:
+        raise HTTPException(404, f"Unknown dataset: {ds_id}")
 
 # ---------- Training ----------
 @app.post("/api/training/start")

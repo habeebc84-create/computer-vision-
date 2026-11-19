@@ -5,6 +5,9 @@
 .venv/
 __pycache__/
 database/*.db
+dataset/classes.json
+dataset/*.zip
+downloads/
 dataset/images/all/
 dataset/images/train/
 dataset/images/val/
@@ -13,6 +16,7 @@ dataset/labels/train/
 dataset/labels/val/
 frontend/dist/
 frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
 models/*.onnx
 models/*.pt
 node_modules/

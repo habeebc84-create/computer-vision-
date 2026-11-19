@@ -20,7 +20,12 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
   const [open, setOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [model, setModel] = useState<ModelStatus | null>(null)
-  useEffect(() => { api.modelStatus().then(setModel).catch(() => null) }, [page])
+  // Real backend reachability — never faked: 'checking' until /api/health answers.
+  const [backend, setBackend] = useState<'checking' | 'online' | 'offline'>('checking')
+  useEffect(() => {
+    api.health().then(() => setBackend('online')).catch(() => setBackend('offline'))
+    api.modelStatus().then(setModel).catch(() => null)
+  }, [page])
   const groups = ['Detect', 'Modules', 'Data', 'System']
   const sidebar = (
     <div className="flex h-full flex-col">
@@ -63,12 +68,22 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
             <p className="hidden text-xs text-slate-400 sm:block">Real-Time Object Detection System · YOLOv8 &amp; Deep Learning</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {backend === 'online'
+              ? <span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30"><Activity size={12} /> Backend connected</span>
+              : backend === 'offline'
+                ? <span className="chip !bg-amber-500/15 !text-amber-300 !border-amber-500/30"><Activity size={12} /> Backend offline</span>
+                : <span className="chip"><Activity size={12} /> Checking backend…</span>}
             <span className={`chip ${model?.loaded ? '' : '!bg-red-500/15 !text-red-300 !border-red-500/30'}`}>
               <Activity size={12} /> {model?.loaded ? `Model ready · ${model.device}` : 'Model not loaded'}
             </span>
             <button className="btn-primary hidden sm:inline-flex" onClick={() => setPage('live')}><Video size={15} /> Quick start</button>
           </div>
         </header>
+        {backend === 'offline' && (
+          <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200 sm:px-6">
+            <b>Backend offline</b> — detection, training and history need the Python backend. Run <code className="rounded bg-black/30 px-1">python run.py</code> locally, or set <code className="rounded bg-black/30 px-1">VITE_API_URL</code> to a hosted backend and redeploy the frontend.
+          </div>
+        )}
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">{children}</main>
         <footer className="border-t border-white/5 px-6 py-3 text-center text-xs text-slate-500">
           ITA0523 Computer Vision capstone · YOLOv8 (Ultralytics) · PyTorch · OpenCV · All detections are real model inference — no simulated results.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, CameraOff, Download, Play, Square, Video } from 'lucide-react'
+import { Camera, CameraOff, Download, Play, Sparkles, Square, Video } from 'lucide-react'
 import { api, DetectResult, toast } from '../lib/api'
 import { DetectionTable } from '../components/ui'
 
@@ -9,6 +9,7 @@ export default function Live() {
   const streamRef = useRef<MediaStream | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessionRef = useRef(0)
+
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<DetectResult | null>(null)
   const [fps, setFps] = useState(0)
@@ -16,9 +17,15 @@ export default function Live() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState('')
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'coco' | 'world'>('coco')
+  const [classesText, setClassesText] = useState('person, car, dog')
+  // Refs so the interval callback always reads the latest mode/prompts.
+  const modeRef = useRef(mode); modeRef.current = mode
+  const classesRef = useRef(classesText); classesRef.current = classesText
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then(ds => setDevices(ds.filter(d => d.kind === 'videoinput'))).catch(() => null)
+    api.modelStatus().then(m => { if (m?.model_path?.includes('world')) setMode('world') }).catch(() => null)
     return () => stop()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -45,6 +52,7 @@ export default function Live() {
     if (session !== sessionRef.current) return
     const v = videoRef.current
     let delay = 160
+
     try {
       if (!v || v.readyState < 2 || !v.videoWidth || !v.videoHeight) return
       const off = document.createElement('canvas')
@@ -52,7 +60,14 @@ export default function Live() {
       off.getContext('2d')!.drawImage(v, 0, 0)
       const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
       if (!blob) return
-      const res = await api.detectFrame(blob)
+      let res: DetectResult
+      if (modeRef.current === 'world') {
+        const prompts = [...new Set(classesRef.current.split(',').map(s => s.trim()).filter(Boolean))]
+        if (prompts.length === 0) throw new Error('Type at least one object name to detect, e.g. "person, dog".')
+        res = await api.openVocabFrame(blob, prompts)
+      } else {
+        res = await api.detectFrame(blob)
+      }
       if (session !== sessionRef.current) return
       setError(''); setResult(res); setFps(res.fps)
       draw(res.detections, v.videoWidth, v.videoHeight)
@@ -64,6 +79,7 @@ export default function Live() {
       // queue up on the model and can display stale results or exhaust memory.
       if (session === sessionRef.current) timerRef.current = setTimeout(() => captureLoop(session), delay)
     }
+
   }
 
   const start = async () => {
@@ -115,6 +131,17 @@ export default function Live() {
           <button className="btn-ghost" onClick={saveSnapshot} disabled={!running}><Download size={15} /> Save snapshot</button>
           <span className={`ml-auto chip ${running ? '' : '!bg-white/5 !text-slate-400 !border-white/10'}`}>{running ? '● LIVE' : '○ OFFLINE'}</span>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>COCO classes (80)</button>
+          <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
+        </div>
+        {mode === 'world' && (
+          <div className="mt-3">
+            <label className="label">Objects to find (comma-separated, up to 20)</label>
+            <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="person, car, dog" aria-label="Object names to detect" />
+            <p className="mt-1 text-xs text-slate-500">YOLO-World detects anything you name. The world model (~25 MB) downloads once on first use; it is slower than the COCO model.</p>
+          </div>
+        )}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-black aspect-video">
           <video ref={videoRef} playsInline muted className="absolute inset-0 m-auto max-h-full max-w-full" />

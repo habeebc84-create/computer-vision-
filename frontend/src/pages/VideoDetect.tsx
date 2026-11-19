@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, FileVideo, Loader2, Upload } from 'lucide-react'
-import { api, toast } from '../lib/api'
+import { api, resolveUrl, toast } from '../lib/api'
 
 export default function VideoDetect() {
   const [file, setFile] = useState<File | null>(null)
@@ -40,7 +40,7 @@ export default function VideoDetect() {
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         <div className="mt-4 flex gap-2">
           <button className="btn-primary" onClick={start} disabled={busy || !file}>{busy ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Upload size={15} /> Process video</>}</button>
-          {job?.status === 'completed' && <a className="btn-ghost" href={`/api/video/${job.id}/download`}><Download size={15} /> Download processed video</a>}
+          {job?.status === 'completed' && <a className="btn-ghost" href={resolveUrl(`/api/video/${job.id}/download`)}><Download size={15} /> Download processed video</a>}
         </div>
         {job && (
           <div className="mt-5">
