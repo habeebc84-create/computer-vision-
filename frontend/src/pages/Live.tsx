@@ -17,6 +17,9 @@ export default function Live() {
   const [error, setError] = useState('')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState('')
+  // True while the browser is hiding camera names (no permission granted yet).
+  const [labelsHidden, setLabelsHidden] = useState(false)
+  const [enablingNames, setEnablingNames] = useState(false)
   const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState<'coco' | 'world'>('coco')
   const [classesText, setClassesText] = useState('person, car, dog')
@@ -28,7 +31,13 @@ export default function Live() {
   const classesRef = useRef(classesText); classesRef.current = classesText
 
   useEffect(() => {
-    navigator.mediaDevices?.enumerateDevices().then(ds => setDevices(ds.filter(d => d.kind === 'videoinput'))).catch(() => null)
+    navigator.mediaDevices?.enumerateDevices().then(ds => {
+      const cams = ds.filter(d => d.kind === 'videoinput')
+      setDevices(cams)
+      // Browsers hide camera names until permission is granted, so before
+      // that the dropdown can only show generic "Camera 1" entries.
+      setLabelsHidden(cams.length > 0 && cams.every(d => !d.label))
+    }).catch(() => null)
     api.modelStatus().then(m => { if (m?.model_path?.includes('world')) setMode('world') }).catch(() => null)
     return () => stop()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,6 +118,23 @@ export default function Live() {
     finally { inFlightRef.current = false; setModelPct(null) }
   }
 
+  const enableCameraNames = async () => {
+    // Ask for camera permission once, only to reveal real camera names —
+    // never on page load. The temporary stream is stopped immediately and
+    // the devices are re-enumerated so the dropdown shows real names.
+    setError(''); setEnablingNames(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      stream.getTracks().forEach(t => t.stop())
+      const ds = await navigator.mediaDevices.enumerateDevices()
+      const cams = ds.filter(d => d.kind === 'videoinput')
+      setDevices(cams)
+      setLabelsHidden(cams.length > 0 && cams.every(d => !d.label))
+    } catch (e: any) {
+      setError(e?.name === 'NotAllowedError' ? 'Camera permission was denied, so camera names stay hidden. Allow camera access in the browser address bar and try again.' : `Could not access the camera: ${e?.message || e}`)
+    } finally { setEnablingNames(false) }
+  }
+
   const start = async () => {
     setError(''); setBusy(true)
     try {
@@ -151,6 +177,13 @@ export default function Live() {
           <button className="btn-ghost" onClick={saveSnapshot} disabled={!running}><Download size={15} /> Save snapshot</button>
           <span className={`ml-auto chip ${running ? '' : '!bg-white/5 !text-slate-400 !border-white/10'}`}>{running ? '● LIVE' : '○ OFFLINE'}</span>
         </div>
+        {labelsHidden && !running && (
+          <p className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm text-amber-200">
+            Camera names are hidden — browsers do not reveal them until you allow camera access, so this list only shows generic names like “Camera 1”.{' '}
+            <button className="font-semibold underline" onClick={enableCameraNames} disabled={enablingNames}>{enablingNames ? 'Asking…' : 'Enable camera names'}</button>
+          </p>
+        )}
+        <p className="mt-2 text-xs text-slate-500">The webcam only works on localhost or a secure (HTTPS) page. If another app is already using the camera, starting it here will fail — close the other app and try again.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>COCO classes (80)</button>
           <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>

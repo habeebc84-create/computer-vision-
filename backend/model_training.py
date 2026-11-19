@@ -68,7 +68,13 @@ class TrainingJob:
 
     def _run(self):
         try:
-            from ultralytics import YOLO
+            try:
+                from ultralytics import YOLO
+            except ImportError:
+                raise RuntimeError(
+                    "The 'ultralytics' package is not installed, so training cannot start. "
+                    "Install the backend dependencies with: pip install -r requirements.txt"
+                ) from None
             cfg = self.config
             model = YOLO(cfg.get("model", "yolov8n.pt"))
             job = self

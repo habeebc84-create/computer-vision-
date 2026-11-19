@@ -43,6 +43,13 @@ AVAILABLE_MODELS = [
      "size_mb": 25},
 ]
 
+# Raised instead of a bare "No module named 'ultralytics'" when the backend
+# dependencies were never installed — names the missing package and the fix.
+MISSING_ULTRALYTICS_MSG = (
+    "The 'ultralytics' package is not installed, so the YOLO model cannot be loaded. "
+    "Install the backend dependencies with: pip install -r requirements.txt"
+)
+
 def validate_open_vocab_classes(raw):
     """Validate open-vocabulary prompts: 1-20 non-empty names, <=40 chars each.
     Returns the cleaned list, or raises ValueError."""
@@ -101,26 +108,42 @@ class ModelManager:
 
     def load(self, path=None):
         """Load (or reload) a YOLO model. Downloads yolov8n.pt on first use."""
-        from ultralytics import YOLO
+        with self._lock:
+            return self._load_locked(path)
+
+    def _load_locked(self, path=None):
+        """Actual load; the caller must already hold self._lock."""
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            self.load_error = MISSING_ULTRALYTICS_MSG
+            raise RuntimeError(MISSING_ULTRALYTICS_MSG) from None
         s = load_settings()
         p = Path(path or s.get("model_path") or "models/yolov8n.pt")
         if not p.is_absolute():
             p = BASE / p
-        with self._lock:
-            self.load_error = None
-            try:
-                self.model = YOLO(str(p))
-                self.model_path = str(p)
-                self.class_names = dict(getattr(self.model, "names", {}) or {})
-                self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
-                return True
-            except Exception as e:
-                self.model = None; self.load_error = str(e)
-                raise
+        # models/ does not exist on a fresh clone (git-ignored) — create it
+        # before YOLO() so the first-use download has somewhere to go.
+        p.parent.mkdir(parents=True, exist_ok=True)
+        self.load_error = None
+        try:
+            self.model = YOLO(str(p))
+            self.model_path = str(p)
+            self.class_names = dict(getattr(self.model, "names", {}) or {})
+            self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
+            return True
+        except Exception as e:
+            self.model = None; self.load_error = str(e)
+            raise
 
     def ensure_loaded(self):
+        # Double-checked locking: concurrent first-use callers share a single
+        # load. The old check-then-load outside the lock raced — 4 threads
+        # arriving together each loaded the model (4 loads instead of 1).
         if self.model is None:
-            self.load()
+            with self._lock:
+                if self.model is None:
+                    self._load_locked()
         return self.model
 
     def status(self):
@@ -192,27 +215,41 @@ class WorldModelManager:
         """Load (or return the cached) YOLO-World model. Downloads the weights
         from Ultralytics on first use; raises RuntimeError with a clear message
         if the download fails (e.g. no internet) — never a fake result."""
-        from ultralytics import YOLO
         with self._lock:
-            if self.model is not None:
-                return True
-            self.load_error = None
-            try:
-                p = BASE / WORLD_MODEL_FILE
-                self.model = YOLO(str(p))
-                self.model_path = str(p)
-                self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
-                return True
-            except Exception as e:
-                self.model = None
-                self.load_error = str(e)
-                raise RuntimeError(
-                    "Could not load the YOLO-World model (weights download "
-                    f"failed — check internet access): {e}")
+            return self._load_locked()
+
+    def _load_locked(self):
+        """Actual load; the caller must already hold self._lock."""
+        if self.model is not None:
+            return True
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            self.load_error = MISSING_ULTRALYTICS_MSG
+            raise RuntimeError(MISSING_ULTRALYTICS_MSG) from None
+        self.load_error = None
+        try:
+            p = BASE / WORLD_MODEL_FILE
+            # models/ does not exist on a fresh clone (git-ignored).
+            p.parent.mkdir(parents=True, exist_ok=True)
+            self.model = YOLO(str(p))
+            self.model_path = str(p)
+            self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
+            return True
+        except Exception as e:
+            self.model = None
+            self.load_error = str(e)
+            raise RuntimeError(
+                "Could not load the YOLO-World model (weights download "
+                f"failed — check internet access): {e}")
 
     def ensure_loaded(self):
+        # Double-checked locking, same as ModelManager: concurrent first-use
+        # callers share one load.
         if self.model is None:
-            self.load()
+            with self._lock:
+                if self.model is None:
+                    self._load_locked()
         return self.model
 
     def detect_array(self, bgr, classes):

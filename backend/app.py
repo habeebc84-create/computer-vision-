@@ -24,7 +24,14 @@ import analytics, report_generator
 BASE = Path(__file__).resolve().parent.parent
 OUT_IMG = BASE / "outputs" / "images"; OUT_VID = BASE / "outputs" / "videos"
 OUT_REP = BASE / "outputs" / "reports"; UP = BASE / "uploads"
-for d in (OUT_IMG, OUT_VID, OUT_REP, UP): d.mkdir(parents=True, exist_ok=True)
+# Defensive: a fresh clone has none of these directories (git-ignored/empty),
+# and the /dataset static mount below crashes at import time if dataset/
+# does not exist. run.py creates them too; this covers importing app.py
+# directly (uvicorn, tests). dataset_manager.ensure_dirs() adds the
+# dataset/images + dataset/labels subdirectories.
+for d in (OUT_IMG, OUT_VID, OUT_REP, UP, BASE / "dataset", BASE / "models"):
+    d.mkdir(parents=True, exist_ok=True)
+ensure_dirs()
 
 app = FastAPI(title="Real-Time Object Detection System", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
