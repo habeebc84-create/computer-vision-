@@ -28,6 +28,7 @@ for d in (OUT_IMG, OUT_VID, OUT_REP, UP): d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Real-Time Object Detection System", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+ensure_dirs()
 analytics.init_db()
 video_jobs = {}
 _frame_times = []
@@ -61,6 +62,8 @@ def models_available():
     for m in AVAILABLE_MODELS:
         entry = dict(m)
         entry["downloaded"] = (BASE / m["path"]).exists()
+        if m["kind"] == "trained" and not entry["downloaded"]:
+            continue
         if m["kind"] == "world":
             entry["loaded"] = world_manager.model is not None
         out.append(entry)
@@ -76,11 +79,10 @@ def post_settings(payload: dict):
     if "conf" in patch: patch["conf"] = max(0.05, min(0.95, float(patch["conf"])))
     if "iou" in patch: patch["iou"] = max(0.1, min(0.95, float(patch["iou"])))
     if "imgsz" in patch: patch["imgsz"] = int(patch["imgsz"])
-    s = save_settings(patch)
     if "model_path" in patch:
         try: manager.load(patch["model_path"])
-        except Exception as e: raise HTTPException(400, f"Settings saved but model failed to load: {e}")
-    return s
+        except Exception as e: raise HTTPException(400, f"Model failed to load: {e}")
+    return save_settings(patch)
 
 # ---------- Detection ----------
 def _summary(dets, ms):

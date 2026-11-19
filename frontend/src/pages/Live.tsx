@@ -148,7 +148,7 @@ export default function Live() {
           <div className="mt-3">
             <label className="label">Objects to find (comma-separated, up to 20)</label>
             <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="person, car, dog" aria-label="Object names to detect" />
-            <p className="mt-1 text-xs text-slate-500">YOLO-World detects anything you name. The world model (~25 MB) downloads once on first use; it is slower than the COCO model.</p>
+            <p className="mt-1 text-xs text-slate-500">YOLO-World searches for the objects you name. First use downloads the detector (~25 MB) and its text encoder (~338 MiB).</p>
           </div>
         )}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}

@@ -3,6 +3,8 @@
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 ultralytics>=8.3,<9.0
+# YOLO-World text prompts use the same CLIP implementation as Ultralytics.
+clip @ https://github.com/ultralytics/CLIP/archive/7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40.zip
 torch>=2.4,<3.0
 torchvision>=0.19,<1.0
 opencv-python-headless>=4.10,<5.0

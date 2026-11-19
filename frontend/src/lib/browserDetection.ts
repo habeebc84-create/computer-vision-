@@ -1,40 +1,41 @@
-// In-browser YOLOv8 detection (ONNX Runtime Web) — used ONLY when the Python
-// backend is unreachable. Real YOLOv8 inference running in this browser, not a
-// simulation: the yolov8n.onnx weights are downloaded once from Habeeb's own
-// Hugging Face model repo (habeebc12/yolov8n-onnx, which serves the file with
-// CORS enabled — GitHub release downloads do not, and browsers block them)
-// and cached in Cache Storage. COCO 80 classes only —
-// open-vocabulary (YOLO-World) stays backend-only.
-import * as ort from 'onnxruntime-web'
+import * as ort from 'onnxruntime-web/wasm'
+import wasmModuleUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url'
+import wasmBinaryUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url'
 import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetections, summarise, Detection, getLocalSettings } from './yoloPost'
+
+import { OBJECTS365_NAMES } from './objects365'
 
 export { COCO_NAMES, getLocalSettings }
 
 export const ONNX_MODEL_URL =
   'https://huggingface.co/habeebc12/yolov8n-onnx/resolve/main/yolov8n.onnx'
-const ONNX_MODEL_SIZE_MB = 12.3
 const CACHE_NAME = 'ods-yolo-model-v2'
-const ORT_VERSION = '1.20.1'
-
-export type ModelState = 'not-downloaded' | 'downloading' | 'ready' | 'error'
-let sessionPromise: Promise<ort.InferenceSession> | null = null
-let modelState: ModelState = 'not-downloaded'
-let modelError = ''
-
-export function getBrowserModelState(): { state: ModelState; error: string } {
-  return { state: modelState, error: modelError }
+const models = {
+  coco: { url: ONNX_MODEL_URL, labels: COCO_NAMES, size: MODEL_INPUT_SIZE },
+  broad: { url: import.meta.env.BASE_URL + 'models/objects365.onnx', labels: OBJECTS365_NAMES, size: MODEL_INPUT_SIZE },
+  package: { url: import.meta.env.BASE_URL + 'models/package.onnx', labels: ['package'], size: 320 },
 }
+export type BrowserModel = keyof typeof models
+type Progress = (loaded: number, total: number) => void
+const sessions = new Map<BrowserModel, Promise<ort.InferenceSession>>()
 
-async function fetchModelBytes(onProgress?: (loaded: number, total: number) => void): Promise<ArrayBuffer> {
-  // Cache Storage first — the ~12 MB model downloads once, then loads offline.
-  try {
-    const cache = await caches.open(CACHE_NAME)
-    const hit = await cache.match(ONNX_MODEL_URL)
-    if (hit) return await hit.arrayBuffer()
-  } catch { /* Cache Storage unavailable — fall through to a plain fetch */ }
-  const r = await fetch(ONNX_MODEL_URL)
-  if (!r.ok || !r.body) throw new Error(`Could not download the detection model (HTTP ${r.status}). Check your internet connection and try again.`)
-  const total = Number(r.headers.get('content-length') || ONNX_MODEL_SIZE_MB * 1024 * 1024)
+async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Promise<ArrayBuffer> {
+  // Remote COCO weights use Cache Storage. Bundled models use the
+  // server's HTTP caching policy so a deployment can replace the file.
+  const { url } = models[model]
+  let cache: Cache | undefined
+  if (model === 'coco') {
+    try {
+      cache = await caches.open(CACHE_NAME)
+      const hit = await cache.match(url)
+      if (hit) return await hit.arrayBuffer()
+    } catch { /* Cache Storage may be disabled */ }
+  }
+  const r = await fetch(url)
+  if (!r.ok || !r.body || r.headers.get('content-type')?.includes('text/html')) {
+    throw new Error(`Could not load the ${model} detection model (HTTP ${r.status}).`)
+  }
+  const total = Number(r.headers.get('content-length'))
   const reader = r.body.getReader()
   const chunks: Uint8Array[] = []
   let loaded = 0
@@ -49,43 +50,37 @@ async function fetchModelBytes(onProgress?: (loaded: number, total: number) => v
   let off = 0
   for (const c of chunks) { buf.set(c, off); off += c.length }
   try {
-    const cache = await caches.open(CACHE_NAME)
-    await cache.put(ONNX_MODEL_URL, new Response(buf.slice().buffer, { headers: { 'content-length': String(loaded) } }))
+    await cache?.put(url, new Response(buf))
   } catch { /* caching is best-effort */ }
   return buf.buffer
 }
 
-/** Load (downloading + caching on first use) the ONNX session. Shared by all callers. */
-export function ensureBrowserModel(onProgress?: (loaded: number, total: number) => void): Promise<ort.InferenceSession> {
-  if (!sessionPromise) {
-    modelState = 'downloading'
-    // Single-threaded wasm: no SharedArrayBuffer / COOP-COEP requirements,
-    // works on plain HTTPS pages such as Vercel.
-    ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`
-    ort.env.wasm.numThreads = 1
-    sessionPromise = fetchModelBytes(onProgress)
-      .then(bytes => ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }))
-      .then(s => { modelState = 'ready'; return s })
-      .catch(e => {
-        modelState = 'error'
-        modelError = e?.message || String(e)
-        sessionPromise = null
-        throw e
-      })
-  }
-  return sessionPromise
+function ensureBrowserModel(model: BrowserModel, onProgress?: Progress): Promise<ort.InferenceSession> {
+  const existing = sessions.get(model)
+  if (existing) return existing
+
+  ort.env.wasm.wasmPaths = { mjs: wasmModuleUrl, wasm: wasmBinaryUrl }
+  ort.env.wasm.numThreads = 1
+  const session = fetchModelBytes(model, onProgress)
+    .then(bytes => ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }))
+    .catch(error => {
+      sessions.delete(model)
+      throw error
+    })
+  sessions.set(model, session)
+  return session
 }
 
-function letterboxToCanvas(source: CanvasImageSource, w: number, h: number): { canvas: HTMLCanvasElement; scale: number; padX: number; padY: number } {
-  const { scale, padX, padY } = letterboxParams(w, h)
+function letterboxToCanvas(source: CanvasImageSource, w: number, h: number, size: number) {
+  const { scale, padX, padY } = letterboxParams(w, h, size)
   const canvas = document.createElement('canvas')
-  canvas.width = MODEL_INPUT_SIZE
-  canvas.height = MODEL_INPUT_SIZE
+  canvas.width = size
+  canvas.height = size
   const ctx = canvas.getContext('2d')!
   // Grey (114,114,114) padding — the same letterbox colour Ultralytics uses,
   // so the browser path sees the same input as the backend.
   ctx.fillStyle = '#727272'
-  ctx.fillRect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
+  ctx.fillRect(0, 0, size, size)
   ctx.drawImage(source, padX, padY, Math.round(w * scale), Math.round(h * scale))
   return { canvas, scale, padX, padY }
 }
@@ -128,7 +123,7 @@ export function annotate(source: CanvasImageSource, w: number, h: number, dets: 
 }
 
 /**
- * Run real YOLOv8 inference in this browser on an image/video/canvas source.
+ * Run the selected detector on an image/video/canvas source.
  * Returns the same DetectResult shape as the backend, plus an annotated
  * data URL (the backend instead returns an /outputs URL).
  */
@@ -136,20 +131,22 @@ export async function detectInBrowser(
   source: CanvasImageSource,
   w: number,
   h: number,
-  onProgress?: (loaded: number, total: number) => void,
+  onProgress?: Progress,
+  model: BrowserModel = 'coco',
 ): Promise<BrowserDetectResult> {
-  const session = await ensureBrowserModel(onProgress)
+  const session = await ensureBrowserModel(model, onProgress)
+  const { size, labels } = models[model]
   const { conf, iou } = getLocalSettings()
-  const { canvas, scale, padX, padY } = letterboxToCanvas(source, w, h)
-  const rgba = canvas.getContext('2d')!.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE).data
-  const tensor = new ort.Tensor('float32', rgbaToTensor(rgba), [1, 3, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE])
+  const { canvas, scale, padX, padY } = letterboxToCanvas(source, w, h, size)
+  const rgba = canvas.getContext('2d')!.getImageData(0, 0, size, size).data
+  const tensor = new ort.Tensor('float32', rgbaToTensor(rgba, size), [1, 3, size, size])
   const t0 = performance.now()
   const feeds: Record<string, ort.Tensor> = {}
   feeds[session.inputNames[0]] = tensor
   const out = await session.run(feeds)
-  const output = out[session.outputNames[0]].data as Float32Array
+  const output = out[session.outputNames[0]]
   const inferenceMs = performance.now() - t0
-  const dets = parseDetections(output, w, h, scale, padX, padY, conf, iou)
+  const dets = parseDetections(output.data as Float32Array, w, h, scale, padX, padY, conf, iou, labels, output.dims, model === 'broad' ? 0.9 : undefined)
   return {
     ...summarise(dets, inferenceMs),
     annotatedDataUrl: annotate(source, w, h, dets),
@@ -160,11 +157,12 @@ export async function detectInBrowser(
 /** Convenience wrapper for an uploaded image file. */
 export async function detectImageFileInBrowser(
   file: File,
-  onProgress?: (loaded: number, total: number) => void,
+  onProgress?: Progress,
+  model: BrowserModel = 'coco',
 ): Promise<BrowserDetectResult> {
   const bmp = await createImageBitmap(file)
   try {
-    return await detectInBrowser(bmp, bmp.width, bmp.height, onProgress)
+    return await detectInBrowser(bmp, bmp.width, bmp.height, onProgress, model)
   } finally {
     bmp.close()
   }

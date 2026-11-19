@@ -35,6 +35,10 @@ AVAILABLE_MODELS = [
      "name": "YOLOv8x (extra-large)", "classes": 80,
      "description": "Most accurate COCO model; slowest, downloads ~130 MB once.",
      "size_mb": 130},
+    {"id": "package-yolov8n.pt", "path": "models/package-yolov8n.pt", "kind": "trained",
+     "name": "Package detector", "classes": 1,
+     "description": "Fine-tuned YOLOv8n for shipping packages.",
+     "size_mb": 6},
     {"id": "yolov8s-worldv2.pt", "path": "models/yolov8s-worldv2.pt",
      "kind": "world", "name": "YOLOv8s-World v2 (open-vocabulary)",
      "classes": None,
@@ -82,7 +86,7 @@ def save_settings(patch):
 
 class ModelManager:
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.model = None
         self.model_path = None
         self.class_names = {}
@@ -109,19 +113,24 @@ class ModelManager:
         with self._lock:
             self.load_error = None
             try:
-                self.model = YOLO(str(p))
+                if p.parent == BASE / "models":
+                    p.parent.mkdir(exist_ok=True)
+                candidate = YOLO(str(p))
+                names = dict(candidate.names)
+                self.model = candidate
                 self.model_path = str(p)
-                self.class_names = dict(getattr(self.model, "names", {}) or {})
+                self.class_names = names
                 self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 return True
             except Exception as e:
-                self.model = None; self.load_error = str(e)
+                self.load_error = str(e)
                 raise
 
     def ensure_loaded(self):
-        if self.model is None:
-            self.load()
-        return self.model
+        with self._lock:
+            if self.model is None:
+                self.load()
+            return self.model
 
     def status(self):
         s = load_settings()
@@ -152,7 +161,7 @@ class ModelManager:
                 clss = r.boxes.cls.cpu().numpy().astype(int)
                 for box, c, cl in zip(xyxy, confs, clss):
                     dets.append({"class_id": int(cl),
-                                 "class_name": self.class_names.get(int(cl), str(int(cl))),
+                                 "class_name": r.names.get(int(cl), str(int(cl))),
                                  "confidence": round(float(c), 4),
                                  "bbox": [round(float(v), 1) for v in box]})
         return dets, ms
@@ -199,6 +208,7 @@ class WorldModelManager:
             self.load_error = None
             try:
                 p = BASE / WORLD_MODEL_FILE
+                p.parent.mkdir(exist_ok=True)
                 self.model = YOLO(str(p))
                 self.model_path = str(p)
                 self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")

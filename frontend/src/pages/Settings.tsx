@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Save } from 'lucide-react'
-import { api, AvailableModel, toast } from '../lib/api'
+import { api, ApiError, AvailableModel, toast } from '../lib/api'
 import { getLocalSettings, saveLocalSettings } from '../lib/yoloPost'
 
 const FALLBACK_MODELS: AvailableModel[] = [
@@ -41,7 +41,10 @@ export default function Settings() {
       const m = await api.modelStatus(); setModel(m)
       toast('Settings saved and applied to inference')
     } catch (e: any) {
-      setError('')
+      if (e instanceof ApiError && !e.backendUnavailable) {
+        setError(e.message)
+        return
+      }
       toast('Backend offline — settings saved on this device only; they apply to in-browser detection', 'err')
     } finally { setBusy(false) }
   }
@@ -86,12 +89,12 @@ export default function Settings() {
             <p className="flex justify-between"><span className="text-slate-400">Loaded at</span><b>{model?.loaded_at || '—'}</b></p>
             {model?.error && <p className="text-red-300">{model.error}</p>}
           </div>
-          {model?.class_names?.length ? <p className="mt-3 text-xs leading-relaxed text-slate-400">COCO classes: {model.class_names.join(', ')}</p> : null}
+          {model?.class_names?.length ? <p className="mt-3 text-xs leading-relaxed text-slate-400">Recognized classes: {model.class_names.join(', ')}</p> : null}
         </div>
         <div className="card">
           <h2 className="font-semibold">About this system</h2>
           <p className="mt-2 text-sm text-slate-300">Real-Time Object Detection System using YOLOv8 and Deep Learning — ITA0523 Computer Vision capstone. Backend: FastAPI + Ultralytics YOLOv8 + PyTorch + OpenCV. History: SQLite. Frontend: React + Vite + Tailwind + Recharts.</p>
-          <p className="mt-2 text-sm text-slate-400">Pretrained weights (yolov8n.pt, ~6 MB; yolov8x.pt, ~130 MB; yolov8s-worldv2.pt, ~25 MB) download automatically from Ultralytics on first load into <code className="rounded bg-white/10 px-1">models/</code> and are git-ignored. Custom weights from Module 2 are saved as <code className="rounded bg-white/10 px-1">models/best.pt</code>. The world model is open-vocabulary: it detects any object you type, not just the 80 COCO classes.</p>
+          <p className="mt-2 text-sm text-slate-400">Pretrained weights (yolov8n.pt, ~6 MB; yolov8x.pt, ~130 MB; yolov8s-worldv2.pt, ~25 MB) download automatically from Ultralytics on first load into <code className="rounded bg-white/10 px-1">models/</code> and are git-ignored. Custom weights from Module 2 are saved as <code className="rounded bg-white/10 px-1">models/best.pt</code>. YOLO-World also downloads a text encoder (~338 MiB) on first use to search for objects by name.</p>
         </div>
       </div>
     </div>

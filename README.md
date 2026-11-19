@@ -1,11 +1,25 @@
-# Real-Time Object Detection System — YOLOv8 & Deep Learning
+# Real-Time Object Detection System
 
 **ITA0523 — Computer Vision capstone project**
 
-A full-stack, production-style web application that detects objects in real time
-from a webcam, in uploaded images, and in uploaded videos — using real YOLOv8
-inference (Ultralytics, PyTorch, OpenCV). No fake detections, no simulated
-results: every bounding box, label and confidence score comes from the model.
+The app detects objects in uploaded images, video and webcam frames. To try a photo, open **Image Detection**, choose a JPG or PNG, and click **Run detection**.
+
+| Image mode | Objects it can find | Where it runs |
+| --- | --- | --- |
+| Everyday objects (365) | YOLOE with the Objects365 vocabulary, including categories such as glasses and sneakers | Browser, with weights bundled in the frontend |
+| Packages (trained) | Parcels, using a YOLOv8n detector fine-tuned on factory package photos | Browser, with weights bundled in the frontend |
+| COCO / selected backend model | The original 80 COCO categories or the labels learned by your selected checkpoint | Python backend, with a browser fallback for COCO |
+| Search by name | Object names you enter as prompts for YOLO-World | Python backend |
+
+Everyday objects is the default on a fresh install. For a category outside its vocabulary, try Search by name. Small, occluded or unfamiliar objects can still be missed. See the [everyday model details](frontend/public/models/objects365.md) and [package training and held-out results](models/package-model.md).
+
+To run the image detector locally with Node.js, start the frontend and open the local address printed by Vite.
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
 ## Modules (exactly as specified)
 
@@ -74,31 +88,11 @@ cd ..
 python run.py
 ```
 
-Open **http://localhost:8000**. The first inference downloads `yolov8n.pt`
-(~6 MB, COCO 80 classes) from Ultralytics into `models/` — internet is
-required once for that download. The `.pt` file is git-ignored on purpose.
+Open **http://localhost:8000**. The default COCO backend downloads YOLOv8n weights on first inference. The Everyday objects and Packages browser modes load their weights from the frontend.
 
-## Why detection doesn't work on Vercel
+## Static hosting and the Python backend
 
-**Short version: Vercel hosts only the static frontend. There is no Python
-backend there, so every `/api/*` call fails — but image and live detection
-now fall back to running YOLOv8 in the browser (see "In-browser detection"
-below), so detection still works on the Vercel site. Training, video and
-history still need a backend.**
-
-This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
-backend. Vercel is a static/serverless host — it can serve the dashboard UI,
-but it cannot run the backend: PyTorch + Ultralytics are hundreds of MB (far
-over Vercel's serverless function size limit), training and video processing
-run for minutes (over the request timeout), and the backend keeps a model in
-memory and writes to SQLite/disk, which serverless functions don't do.
-
-What you see on a Vercel deploy: the dashboard loads, the header shows an
-amber **"Backend offline"** banner, and every detection/training/history
-action fails with a clear message instead of a wall of HTML — the frontend
-never pretends the backend is there.
-
-**To make a Vercel frontend actually detect objects, point it at a backend:**
+A static deployment can run both bundled image models and COCO browser inference. To enable search by name, custom backend weights, training, video and history, configure a persistent Python backend.
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
@@ -121,57 +115,16 @@ frontend itself on the same origin, and `VITE_API_URL` stays empty.
 
 ## In-browser detection (no backend)
 
-**Update: image and live-webcam detection now work even when the backend is
-offline.** When the frontend cannot reach the backend, the Image and Live
-pages automatically fall back to running real YOLOv8 inference inside the
-browser — the page shows a violet chip, "Running in your browser — no backend
-connected", so a browser result is never passed off as a backend result.
+The browser runs ONNX Runtime Web using the WASM files from the frontend build. It resizes the image with padding, runs the selected model, applies the confidence and IoU thresholds from Settings, then maps the boxes back to the original image. Browser results can be downloaded as annotated images.
 
-How it works:
-
-- The browser downloads `yolov8n.onnx` (~12 MB, once only) from Habeeb's own
-  Hugging Face model repo
-  (`https://huggingface.co/habeebc12/yolov8n-onnx/resolve/main/yolov8n.onnx`)
-  and caches it in Cache Storage. The `.onnx` file is **not** committed to
-  the repo. (First version fetched it from Ultralytics' GitHub release
-  download — that host sends no CORS headers, so browsers blocked the
-  download with "Failed to fetch"; Hugging Face serves it with
-  `Access-Control-Allow-Origin: *`, which is why the model lives there.)
-- Inference runs with ONNX Runtime Web (`onnxruntime-web` 1.20.1, single-
-  threaded wasm; its wasm files load from the jsDelivr CDN), using the same
-  preprocessing and NMS as the backend: 640×640 letterbox (grey 114 padding,
-  like Ultralytics), NCHW float32, YOLOv8 `84×8400` output parsing,
-  confidence threshold + class-aware NMS, boxes rescaled to the original
-  image. The confidence/IoU thresholds come from Settings (saved on the
-  device in `localStorage`, so they work offline too).
-- The ONNX code is lazy-loaded — the runtime only downloads when the backend
-  is actually unreachable, so the normal (backend) path costs nothing extra.
-
-Limits — stated honestly:
-
-- **COCO 80 classes only.** Open-vocabulary (YOLO-World, "type any object")
-  has no browser build and stays backend-only; choosing it while offline
-  shows a clear error instead of a fake result.
-- **Slower than the backend.** Measured ~180 ms/frame with native CPU
-  inference in Node; in-browser wasm is slower (~2 fps effective for live
-  video on a typical laptop). Photos are fine; live video is snapshots, not
-  smooth video, until run on a faster machine.
-- **Video, training and history still need the backend.** They are not
-  faked in the browser: those pages keep saying the backend is required.
-  In-browser results are not saved to history.
-- **Tiny edge objects can differ from the backend.** Verified on the
-  Ultralytics bus photo: the browser found the bus (84%) and all 4 people
-  (88/88/87/43%), matching the backend's 6 detections except the tiny
-  stop sign at the image edge (backend 26%, browser max score 4%) — a
-  marginal object whose score depends on resize details.
+The Everyday objects and Packages models run locally in the browser, including on a static host. The original COCO image mode and webcam fallback download the original 80-class model from Hugging Face on first use. Browser results stay out of backend history.
 
 ## Built-in datasets (one-click download)
 
 Module 1 — Dataset has a **"Recommended datasets"** section with two official
 Ultralytics COCO samples, verified live (HTTP 200) — click **Download &
 import** and the backend downloads, verifies and imports them into
-`dataset/images/all/` + `dataset/labels/all/`, with class names set to the
-80 COCO classes. Then Split the dataset and train in Module 2 as usual.
+`dataset/images/all/` + `dataset/labels/all/`, and maps the 80 COCO labels into the existing class list. Then Split the dataset and train in Module 2 as usual.
 
 | Dataset | Images | Classes | Size | Licence |
 |---|---|---|---|---|
@@ -203,42 +156,13 @@ npm run dev
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
 
-## Open-vocabulary detection (recognise any object)
+## Search for objects by name
 
-The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
-"person", "car", "dog" and 77 others. If you need **any** object, use
-**YOLO-World** (`yolov8s-worldv2.pt`, Ultralytics): it is an
-open-vocabulary detector, so you type the object names in plain English and
-it finds them — "red bus", "traffic light", "laptop", "cricket bat", anything
-you can name. No training and no dataset are needed for this.
+In **Image Detection**, choose **Search by name** and enter up to 20 comma-separated names. In **Live Detection**, choose **Any object — type its name**. The Python backend uses YOLO-World to compare those prompts with regions of the image. Choosing YOLOv8s-World v2 in Settings makes it the initial mode for those pages.
 
-How to use it:
+First use downloads the YOLO-World weights (about 25 MB) and CLIP text encoder (about 338 MiB). Specific prompts such as `sneaker` or `traffic light` can help. Uncommon objects and small objects can still be missed.
 
-1. **Image Detection** or **Live Detection** — switch the toggle to
-   **"Any object — type its name"** and type comma-separated object names
-   (e.g. `red bus, traffic light, dog`, up to 20), then run detection as
-   usual. Results show your prompted names, with the same boxes, confidence
-   and history records as COCO detection (history type `open-vocab`).
-2. Or pick **YOLOv8s-World v2** in **Settings → Model** — Image and Live
-   then start in Any-object mode automatically.
-3. API: `POST /api/detect/open-vocab/image` (multipart image + `classes`
-   form field, JSON array or comma-separated text) and
-   `POST /api/detect/open-vocab/frame` (live frames, no history record).
-   `GET /api/models/available` lists all selectable models.
-
-Notes and limits (honest):
-
-- The world weights (~25 MB) download once from Ultralytics on first use
-  into `models/` (git-ignored). Without internet the first open-vocab call
-  returns a clear 503 error — it never invents boxes.
-- Prompt wording matters: specific names ("red bus") work better than vague
-  ones ("thing"). It is slower and less accurate than a COCO model on the
-  classes that model was trained for, and it can occasionally mistake a
-  similar-looking object — always check the confidence and the box.
-- It does not "know every image in the world" — it matches your words
-  against what it sees using a vision-language model, so unusual or very
-  small objects may be missed. For a fixed set of objects you detect often,
-  a custom-trained model (Module 2) is still the more accurate choice.
+The API accepts a multipart image and `classes` at `POST /api/detect/open-vocab/image` and a frame and `classes` at `POST /api/detect/open-vocab/frame`. The classes field accepts a JSON array or comma-separated names.
 
 ## Using the app
 
@@ -354,5 +278,4 @@ default 7860 on Spaces).
 
 Notes: Space storage is ephemeral — detection history and uploads reset when
 the Space restarts. Training on the free CPU tier is slow; use small
-datasets (COCO8/COCO128) and few epochs. The YOLO-World model downloads
-(~25 MB) on first open-vocab use.
+datasets (COCO8/COCO128) and few epochs. First use of Search by name also downloads the detector and its text encoder.

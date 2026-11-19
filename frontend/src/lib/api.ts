@@ -4,7 +4,7 @@ export interface ModelStatus { loaded: boolean; model_path: string; device: stri
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
 export interface BuiltinDataset { id: string; name: string; description: string; images: number; classes: number; size_mb: number; url: string; license: string; status: string; imported_images?: number; imported_labels?: number; progress?: number; error?: string | null }
-export interface AvailableModel { id: string; path: string; kind: 'coco' | 'world'; name: string; classes: number | null; description: string; size_mb: number; downloaded: boolean; loaded?: boolean }
+export interface AvailableModel { id: string; path: string; kind: 'coco' | 'world' | 'trained'; name: string; classes: number | null; description: string; size_mb: number; downloaded: boolean; loaded?: boolean }
 
 /**
  * API base URL. When the frontend is served by the Python backend (python run.py)
@@ -22,6 +22,16 @@ export function resolveUrl(u: string): string {
   return API_BASE + (u.startsWith('/') ? u : `/${u}`)
 }
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status?: number) {
+    super(message)
+  }
+
+  get backendUnavailable() {
+    return this.status === undefined || this.status === 404 || this.status >= 500
+  }
+}
+
 const BACKEND_OFFLINE_404 = 'Backend not reachable (API returned 404). Run the Python backend with python run.py, or set VITE_API_URL to your backend URL.'
 const BACKEND_OFFLINE_NET = 'Backend not reachable — could not connect. Run the Python backend with python run.py, or set VITE_API_URL to your backend URL.'
 
@@ -32,25 +42,22 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     r = await fetch(url, init)
   } catch {
     // Network failure (backend down, wrong VITE_API_URL, CORS) — never show a stack trace.
-    throw new Error(BACKEND_OFFLINE_NET)
+    throw new ApiError(BACKEND_OFFLINE_NET)
   }
   const text = await r.text()
   if (!r.ok) {
     // Real backend errors are JSON with `detail` — keep those verbatim.
     const ct = r.headers.get('content-type') || ''
     if (ct.includes('application/json')) {
+      let detail: unknown
       try {
         const data = JSON.parse(text)
-        if (data.detail || data.message) throw new Error(String(data.detail || data.message))
-      } catch (e) {
-        // Not JSON after all — fall through to the friendly errors below.
-        void e
-      }
+        detail = data?.detail || data?.message
+      } catch { /* Use the HTTP status when the response has invalid JSON. */ }
+      if (detail) throw new ApiError(String(detail), r.status)
     }
-    // A non-JSON error body (e.g. Vercel's 404 HTML page when no backend exists)
-    // must never be surfaced as the error message.
-    if (r.status === 404 && path.startsWith('/api')) throw new Error(BACKEND_OFFLINE_404)
-    throw new Error(`Request failed (${r.status})`)
+    if (r.status === 404 && path.startsWith('/api')) throw new ApiError(BACKEND_OFFLINE_404, r.status)
+    throw new ApiError(`Request failed (${r.status})`, r.status)
   }
   if (!text) return {} as T
   try {
@@ -66,7 +73,7 @@ export async function isBackendOnline(): Promise<boolean> {
   const now = Date.now()
   if (_healthCache && now - _healthCache.at < 10_000) return _healthCache.online
   let online = false
-  try { await api.health(); online = true } catch { online = false }
+  try { online = (await api.health())?.status === 'ok' } catch { online = false }
   _healthCache = { at: now, online }
   return online
 }
