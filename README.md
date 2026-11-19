@@ -93,12 +93,11 @@ over Vercel's serverless function size limit), training and video processing
 run for minutes (over the request timeout), and the backend keeps a model in
 memory and writes to SQLite/disk, which serverless functions don't do.
 
-What you see on a Vercel deploy: the dashboard loads, the header shows an
-amber **"Backend offline"** banner, and every detection/training/history
-action fails with a clear message instead of a wall of HTML — the frontend
-never pretends the backend is there.
+When the API is unavailable, the header shows **Browser mode**. COCO image
+and webcam detection can run in the browser; training, video processing,
+open-vocabulary detection and saved history require the Python service.
 
-**To make a Vercel frontend actually detect objects, point it at a backend:**
+**To enable backend features on a Vercel frontend:**
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
