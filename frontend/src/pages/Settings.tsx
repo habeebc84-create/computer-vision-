@@ -1,16 +1,31 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Save } from 'lucide-react'
-import { api, toast } from '../lib/api'
+import { api, AvailableModel, toast } from '../lib/api'
+
+const FALLBACK_MODELS: AvailableModel[] = [
+  { id: 'yolov8n.pt', path: 'models/yolov8n.pt', kind: 'coco', name: 'YOLOv8n (nano)', classes: 80, description: 'Fastest COCO model — 80 fixed classes. Default.', size_mb: 6, downloaded: false },
+  { id: 'yolov8s.pt', path: 'models/yolov8s.pt', kind: 'coco', name: 'YOLOv8s (small)', classes: 80, description: 'More accurate than nano, still fast on CPU.', size_mb: 22, downloaded: false },
+  { id: 'yolov8m.pt', path: 'models/yolov8m.pt', kind: 'coco', name: 'YOLOv8m (medium)', classes: 80, description: 'Noticeably more accurate; slower on CPU.', size_mb: 52, downloaded: false },
+  { id: 'yolov8x.pt', path: 'models/yolov8x.pt', kind: 'coco', name: 'YOLOv8x (extra-large)', classes: 80, description: 'Most accurate COCO model; slowest, downloads ~130 MB once.', size_mb: 130, downloaded: false },
+  { id: 'yolov8s-worldv2.pt', path: 'models/yolov8s-worldv2.pt', kind: 'world', name: 'YOLOv8s-World v2 (open-vocabulary)', classes: null, description: "Type any object name and it detects it — not limited to the 80 COCO classes.", size_mb: 25, downloaded: false },
+]
 
 export default function Settings() {
   const [s, setS] = useState<any>({ model_path: 'models/yolov8n.pt', conf: 0.25, iou: 0.45, imgsz: 640, device: 'auto' })
   const [model, setModel] = useState<any>(null)
+  const [models, setModels] = useState<AvailableModel[]>(FALLBACK_MODELS)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     api.getSettings().then(setS).catch(() => null)
     api.modelStatus().then(setModel).catch(() => null)
+    api.listModels().then(setModels).catch(() => null)
   }, [])
+  const selectedModel = models.find(m => m.path === s.model_path)
+  const modelOptions = [...models]
+  if (s.model_path && !modelOptions.some(m => m.path === s.model_path)) {
+    modelOptions.push({ id: s.model_path, path: s.model_path, kind: 'coco', name: `Custom — ${s.model_path.split('/').pop()}`, classes: null, description: 'Custom weights (e.g. models/best.pt from training).', size_mb: 0, downloaded: true })
+  }
   const save = async () => {
     setBusy(true); setError('')
     try {
@@ -30,7 +45,14 @@ export default function Settings() {
         <h2 className="font-semibold">Detection settings</h2>
         <p className="mt-1 text-sm text-slate-400">These values are sent to the backend and used by every real YOLOv8 inference call (live, image and video).</p>
         <div className="mt-4 space-y-4">
-          <div><label className="label">Model path</label><input className="input" value={s.model_path} onChange={e => setS({ ...s, model_path: e.target.value })} placeholder="models/yolov8n.pt or models/best.pt" /><p className="mt-1 text-xs text-slate-500">Use <code className="rounded bg-white/10 px-1">models/best.pt</code> after training a custom model.</p></div>
+          <div>
+            <label className="label">Model</label>
+            <select className="input" value={s.model_path} onChange={e => setS({ ...s, model_path: e.target.value })} aria-label="Model">
+              {modelOptions.map(m => <option key={m.path} value={m.path}>{m.name}{m.downloaded ? '' : ` — downloads ~${m.size_mb} MB once`}</option>)}
+              <option value="models/best.pt">Custom — best.pt (from Module 2 training)</option>
+            </select>
+            <p className="mt-1 text-xs text-slate-500">{selectedModel?.description || 'Custom weights (e.g. models/best.pt from training).'}{selectedModel?.kind === 'world' ? ' Choosing the world model switches Image and Live detection to Any-object mode — type the object names you want to find.' : ''}</p>
+          </div>
           <div><label className="label">Confidence threshold — {s.conf}</label><input type="range" min={0.05} max={0.95} step={0.05} value={s.conf} onChange={e => setS({ ...s, conf: +e.target.value })} className="w-full accent-sky-500" /></div>
           <div><label className="label">IoU threshold — {s.iou}</label><input type="range" min={0.1} max={0.95} step={0.05} value={s.iou} onChange={e => setS({ ...s, iou: +e.target.value })} className="w-full accent-sky-500" /></div>
           <div><label className="label">Image size (imgsz)</label><select className="input" value={s.imgsz} onChange={e => setS({ ...s, imgsz: +e.target.value })}><option value={320}>320 — fastest</option><option value={480}>480</option><option value={640}>640 — default</option><option value={960}>960</option><option value={1280}>1280 — slowest, most detail</option></select></div>
@@ -58,7 +80,7 @@ export default function Settings() {
         <div className="card">
           <h2 className="font-semibold">About this system</h2>
           <p className="mt-2 text-sm text-slate-300">Real-Time Object Detection System using YOLOv8 and Deep Learning — ITA0523 Computer Vision capstone. Backend: FastAPI + Ultralytics YOLOv8 + PyTorch + OpenCV. History: SQLite. Frontend: React + Vite + Tailwind + Recharts.</p>
-          <p className="mt-2 text-sm text-slate-400">Pretrained weights (yolov8n.pt, ~6 MB) download automatically from Ultralytics on first load into <code className="rounded bg-white/10 px-1">models/</code> and are git-ignored. Custom weights from Module 2 are saved as <code className="rounded bg-white/10 px-1">models/best.pt</code>.</p>
+          <p className="mt-2 text-sm text-slate-400">Pretrained weights (yolov8n.pt, ~6 MB; yolov8x.pt, ~130 MB; yolov8s-worldv2.pt, ~25 MB) download automatically from Ultralytics on first load into <code className="rounded bg-white/10 px-1">models/</code> and are git-ignored. Custom weights from Module 2 are saved as <code className="rounded bg-white/10 px-1">models/best.pt</code>. The world model is open-vocabulary: it detects any object you type, not just the 80 COCO classes.</p>
         </div>
       </div>
     </div>

@@ -154,6 +154,43 @@ npm run dev
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
 
+## Open-vocabulary detection (recognise any object)
+
+The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
+"person", "car", "dog" and 77 others. If you need **any** object, use
+**YOLO-World** (`yolov8s-worldv2.pt`, Ultralytics): it is an
+open-vocabulary detector, so you type the object names in plain English and
+it finds them — "red bus", "traffic light", "laptop", "cricket bat", anything
+you can name. No training and no dataset are needed for this.
+
+How to use it:
+
+1. **Image Detection** or **Live Detection** — switch the toggle to
+   **"Any object — type its name"** and type comma-separated object names
+   (e.g. `red bus, traffic light, dog`, up to 20), then run detection as
+   usual. Results show your prompted names, with the same boxes, confidence
+   and history records as COCO detection (history type `open-vocab`).
+2. Or pick **YOLOv8s-World v2** in **Settings → Model** — Image and Live
+   then start in Any-object mode automatically.
+3. API: `POST /api/detect/open-vocab/image` (multipart image + `classes`
+   form field, JSON array or comma-separated text) and
+   `POST /api/detect/open-vocab/frame` (live frames, no history record).
+   `GET /api/models/available` lists all selectable models.
+
+Notes and limits (honest):
+
+- The world weights (~25 MB) download once from Ultralytics on first use
+  into `models/` (git-ignored). Without internet the first open-vocab call
+  returns a clear 503 error — it never invents boxes.
+- Prompt wording matters: specific names ("red bus") work better than vague
+  ones ("thing"). It is slower and less accurate than a COCO model on the
+  classes that model was trained for, and it can occasionally mistake a
+  similar-looking object — always check the confidence and the box.
+- It does not "know every image in the world" — it matches your words
+  against what it sees using a vision-language model, so unusual or very
+  small objects may be missed. For a fixed set of objects you detect often,
+  a custom-trained model (Module 2) is still the more accurate choice.
+
 ## Using the app
 
 - **Overview Dashboard** — totals, class distribution and activity from
@@ -196,7 +233,10 @@ into `dataset/labels/all/` and the matching images into
 | `GET /api/health` | Backend + model-loaded status |
 | `GET /api/model/status` | Loaded model, device, classes, thresholds |
 | `POST /api/model/load` `{path}` | Load a model file (e.g. `models/best.pt`) |
+| `GET /api/models/available` | Selectable models: yolov8n/s/m/x (COCO) + yolov8s-worldv2 (open-vocab) |
 | `POST /api/detect/image` | Multipart image → detections + annotated image URL |
+| `POST /api/detect/open-vocab/image` | Multipart image + `classes` (JSON array or comma text) → YOLO-World detections |
+| `POST /api/detect/open-vocab/frame` | Multipart JPEG frame + `classes` → YOLO-World detections (live, no history) |
 | `POST /api/detect/frame` | Multipart JPEG frame → detections (live webcam) |
 | `POST /api/detect/frame/save` | Same, plus records the frame in history |
 | `POST /api/video/start` | Multipart video → job id |

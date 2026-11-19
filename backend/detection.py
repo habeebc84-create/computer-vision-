@@ -11,6 +11,62 @@ SETTINGS_FILE = BASE / "settings.json"
 DEFAULTS = {"model_path": "models/yolov8n.pt", "conf": 0.25, "iou": 0.45,
             "imgsz": 640, "device": "auto"}
 
+# Open-vocabulary (YOLO-World) model — detects any object named in plain text,
+# not just the 80 COCO classes. Weights (~25 MB) auto-download from Ultralytics
+# into models/ on first use, like yolov8n.pt; *.pt is git-ignored.
+WORLD_MODEL_FILE = "models/yolov8s-worldv2.pt"
+
+# Models the UI can choose from. "world" models are open-vocabulary; the rest
+# are standard COCO (80 fixed classes). Sizes are approximate download sizes.
+AVAILABLE_MODELS = [
+    {"id": "yolov8n.pt", "path": "models/yolov8n.pt", "kind": "coco",
+     "name": "YOLOv8n (nano)", "classes": 80,
+     "description": "Fastest COCO model — 80 fixed classes. Default.",
+     "size_mb": 6},
+    {"id": "yolov8s.pt", "path": "models/yolov8s.pt", "kind": "coco",
+     "name": "YOLOv8s (small)", "classes": 80,
+     "description": "More accurate than nano, still fast on CPU.",
+     "size_mb": 22},
+    {"id": "yolov8m.pt", "path": "models/yolov8m.pt", "kind": "coco",
+     "name": "YOLOv8m (medium)", "classes": 80,
+     "description": "Noticeably more accurate; slower on CPU.",
+     "size_mb": 52},
+    {"id": "yolov8x.pt", "path": "models/yolov8x.pt", "kind": "coco",
+     "name": "YOLOv8x (extra-large)", "classes": 80,
+     "description": "Most accurate COCO model; slowest, downloads ~130 MB once.",
+     "size_mb": 130},
+    {"id": "yolov8s-worldv2.pt", "path": "models/yolov8s-worldv2.pt",
+     "kind": "world", "name": "YOLOv8s-World v2 (open-vocabulary)",
+     "classes": None,
+     "description": "Type any object name (e.g. 'red bus', 'traffic light') and it "
+                    "detects it — not limited to the 80 COCO classes.",
+     "size_mb": 25},
+]
+
+def validate_open_vocab_classes(raw):
+    """Validate open-vocabulary prompts: 1-20 non-empty names, <=40 chars each.
+    Returns the cleaned list, or raises ValueError."""
+    if raw is None:
+        raise ValueError("Provide 1-20 object names to detect.")
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("Object names must be a list or comma-separated text.")
+    cleaned, seen = [], set()
+    for c in raw:
+        c = str(c).strip()
+        if not c:
+            continue
+        if len(c) > 40:
+            raise ValueError(f"Object name too long (max 40 chars): '{c[:40]}…'")
+        if c.lower() not in seen:
+            seen.add(c.lower()); cleaned.append(c)
+    if not cleaned:
+        raise ValueError("Provide at least one object name to detect.")
+    if len(cleaned) > 20:
+        raise ValueError("At most 20 object names at a time.")
+    return cleaned
+
 def load_settings():
     s = dict(DEFAULTS)
     try:
@@ -117,3 +173,83 @@ class ModelManager:
         return img
 
 manager = ModelManager()
+
+
+class WorldModelManager:
+    """Open-vocabulary YOLO-World model, cached separately from the COCO model
+    so switching between them never reloads weights. Every box comes from a
+    real model.predict() call after set_classes(prompts)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.model = None
+        self.model_path = None
+        self.classes = []
+        self.load_error = None
+        self.loaded_at = None
+
+    def load(self):
+        """Load (or return the cached) YOLO-World model. Downloads the weights
+        from Ultralytics on first use; raises RuntimeError with a clear message
+        if the download fails (e.g. no internet) — never a fake result."""
+        from ultralytics import YOLO
+        with self._lock:
+            if self.model is not None:
+                return True
+            self.load_error = None
+            try:
+                p = BASE / WORLD_MODEL_FILE
+                self.model = YOLO(str(p))
+                self.model_path = str(p)
+                self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
+                return True
+            except Exception as e:
+                self.model = None
+                self.load_error = str(e)
+                raise RuntimeError(
+                    "Could not load the YOLO-World model (weights download "
+                    f"failed — check internet access): {e}")
+
+    def ensure_loaded(self):
+        if self.model is None:
+            self.load()
+        return self.model
+
+    def detect_array(self, bgr, classes):
+        """Run real open-vocabulary inference. `classes` is a list of prompt
+        strings; returned detections use the prompt text as class_name."""
+        classes = validate_open_vocab_classes(classes)
+        model = self.ensure_loaded()
+        s = load_settings()
+        t0 = time.perf_counter()
+        with self._lock:
+            if list(self.classes) != list(classes):
+                model.set_classes(classes)
+                self.classes = list(classes)
+            results = model.predict(source=bgr, conf=float(s["conf"]),
+                                    iou=float(s["iou"]), imgsz=int(s["imgsz"]),
+                                    device=manager.device(), verbose=False)
+        ms = (time.perf_counter() - t0) * 1000.0
+        dets = []
+        if results:
+            r = results[0]
+            if r.boxes is not None:
+                xyxy = r.boxes.xyxy.cpu().numpy()
+                confs = r.boxes.conf.cpu().numpy()
+                clss = r.boxes.cls.cpu().numpy().astype(int)
+                for box, c, cl in zip(xyxy, confs, clss):
+                    name = classes[int(cl)] if 0 <= int(cl) < len(classes) else str(int(cl))
+                    dets.append({"class_id": int(cl),
+                                 "class_name": name,
+                                 "confidence": round(float(c), 4),
+                                 "bbox": [round(float(v), 1) for v in box]})
+        return dets, ms
+
+    def status(self):
+        return {"loaded": self.model is not None,
+                "model_path": self.model_path or WORLD_MODEL_FILE,
+                "classes": list(self.classes),
+                "loaded_at": self.loaded_at, "error": self.load_error}
+
+
+world_manager = WorldModelManager()

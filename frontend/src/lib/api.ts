@@ -4,6 +4,7 @@ export interface ModelStatus { loaded: boolean; model_path: string; device: stri
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
 export interface BuiltinDataset { id: string; name: string; description: string; images: number; classes: number; size_mb: number; url: string; license: string; status: string; imported_images?: number; imported_labels?: number; progress?: number; error?: string | null }
+export interface AvailableModel { id: string; path: string; kind: 'coco' | 'world'; name: string; classes: number | null; description: string; size_mb: number; downloaded: boolean; loaded?: boolean }
 
 /**
  * API base URL. When the frontend is served by the Python backend (python run.py)
@@ -64,9 +65,18 @@ export const api = {
   loadModel: (path: string) => req<ModelStatus>('/api/model/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) }),
   getSettings: () => req<any>('/api/settings'),
   saveSettings: (s: any) => req<any>('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }),
+  listModels: () => req<AvailableModel[]>('/api/models/available'),
   detectImage: async (file: File) => {
     const fd = new FormData(); fd.append('file', file)
     return req<DetectResult>('/api/detect/image', { method: 'POST', body: fd })
+  },
+  openVocabImage: async (file: File, classes: string[]) => {
+    const fd = new FormData(); fd.append('file', file); fd.append('classes', JSON.stringify(classes))
+    return req<DetectResult & { prompts?: string[] }>('/api/detect/open-vocab/image', { method: 'POST', body: fd })
+  },
+  openVocabFrame: async (blob: Blob, classes: string[]) => {
+    const fd = new FormData(); fd.append('frame', blob, 'frame.jpg'); fd.append('classes', JSON.stringify(classes))
+    return req<DetectResult & { prompts?: string[] }>('/api/detect/open-vocab/frame', { method: 'POST', body: fd })
   },
   detectFrame: async (blob: Blob) => {
     const fd = new FormData(); fd.append('frame', blob, 'frame.jpg')
