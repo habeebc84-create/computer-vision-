@@ -1,0 +1,15 @@
+# Render Blueprint — free Docker web service for the FastAPI backend.
+# Deploy: dashboard.render.com → New + → Blueprint → connect this repo.
+# Or: New + → Web Service → build from this repo, Runtime: Docker, Plan: Free.
+services:
+  - type: web
+    name: object-detection-backend
+    env: docker
+    repo: https://github.com/habeebc84-create/computer-vision-
+    branch: main
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
