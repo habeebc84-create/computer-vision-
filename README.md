@@ -92,7 +92,7 @@ Open **http://localhost:8000**. The default COCO backend downloads YOLOv8n weigh
 
 ## Static hosting and the Python backend
 
-A static deployment can run both bundled image models and COCO browser inference. To enable search by name, custom backend weights, training, video and history, configure a persistent Python backend.
+The header shows **Browser mode** when the backend is unavailable. A static deployment can run both bundled image models and COCO browser inference. To enable search by name, custom backend weights, training, video and history, configure a persistent Python backend.
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
