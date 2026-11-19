@@ -22,6 +22,7 @@ export default function Live() {
   const [classesText, setClassesText] = useState('person, car, dog')
   const [source, setSource] = useState<'backend' | 'browser' | null>(null)
   const [modelPct, setModelPct] = useState<number | null>(null)
+  const [promptStatus, setPromptStatus] = useState('')
   // Refs so the interval callback always reads the latest mode/prompts.
   const modeRef = useRef(mode); modeRef.current = mode
   const classesRef = useRef(classesText); classesRef.current = classesText
@@ -61,20 +62,30 @@ export default function Live() {
     try {
       let res: DetectResult
       if (modeRef.current === 'world') {
-        // YOLO-World only runs on the backend — there is no browser build of it.
-        if (!(await isBackendOnline())) {
-          setError('Any-object (YOLO-World) detection needs the Python backend — it cannot run in the browser. Switch to COCO mode to detect in-browser, or start the backend with python run.py.')
-          return
-        }
-        const off = document.createElement('canvas')
-        off.width = v.videoWidth; off.height = v.videoHeight
-        off.getContext('2d')!.drawImage(v, 0, 0)
-        const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
-        if (!blob) return
         const prompts = [...new Set(classesRef.current.split(',').map(s => s.trim()).filter(Boolean))]
         if (prompts.length === 0) throw new Error('Type at least one object name to detect, e.g. "person, dog".')
-        res = await api.openVocabFrame(blob, prompts)
-        setSource('backend')
+        if (await isBackendOnline()) {
+          // YOLO-World on the backend when it is connected.
+          const off = document.createElement('canvas')
+          off.width = v.videoWidth; off.height = v.videoHeight
+          off.getContext('2d')!.drawImage(v, 0, 0)
+          const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
+          if (!blob) return
+          res = await api.openVocabFrame(blob, prompts)
+          setSource('backend')
+        } else {
+          // No backend: real Grounding DINO open-vocabulary inference in the browser.
+          // Slow (~1 frame every few seconds on CPU) — the in-flight guard above
+          // keeps frames from stacking while one is still being processed.
+          const { detectOpenVocabInBrowser } = await import('../lib/browserOpenVocab')
+          const off = document.createElement('canvas')
+          off.width = v.videoWidth; off.height = v.videoHeight
+          res = await detectOpenVocabInBrowser(v, v.videoWidth, v.videoHeight, prompts, (loaded, total) => {
+            if (total > 0) setModelPct(Math.round((loaded / total) * 100))
+          }, (done, total, prompt) => setPromptStatus(`Looking for “${prompt}”… (${done} of ${total})`))
+          setModelPct(null)
+          setSource('browser')
+        }
       } else if (await isBackendOnline()) {
         const off = document.createElement('canvas')
         off.width = v.videoWidth; off.height = v.videoHeight
@@ -148,12 +159,18 @@ export default function Live() {
           <div className="mt-3">
             <label className="label">Objects to find (comma-separated, up to 20)</label>
             <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="person, car, dog" aria-label="Object names to detect" />
-            <p className="mt-1 text-xs text-slate-500">YOLO-World detects anything you name. The world model (~25 MB) downloads once on first use; it is slower than the COCO model.</p>
+            <p className="mt-1 text-xs text-slate-500">Detects anything you name. With the backend connected this uses YOLO-World (~25 MB). Without a backend it runs Grounding DINO in your browser instead (~205 MB download once, slower, experimental — each object checked takes several seconds, so live video is snapshots, not smooth video).</p>
+            <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Try an object outside the COCO list">
+              {['microphone', 'sunglasses', 'headphones', 'traffic cone', 'whiteboard', 'coffee mug'].map(p => (
+                <button key={p} type="button" className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs text-violet-200 hover:bg-violet-500/20" onClick={() => setClassesText(p)} title="Try this non-COCO object">{p}</button>
+              ))}
+            </div>
           </div>
         )}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
-        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}% (~12 MB, once only — it is cached in your browser after that).</p>}
-        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser — no backend connected. Real YOLOv8 inference on your device; frames never leave this browser and results are not saved to history.</p>}
+        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
+        {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser — no backend connected. Real {mode === 'world' ? 'Grounding DINO open-vocabulary' : 'YOLOv8'} inference on your device; frames never leave this browser and results are not saved to history.</p>}
         <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-black aspect-video">
           <video ref={videoRef} playsInline muted className="h-full w-full object-contain" />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
@@ -170,7 +187,7 @@ export default function Live() {
             <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{result ? (result.avg_confidence * 100).toFixed(1) + '%' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result ? result.inference_ms.toFixed(0) + ' ms' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Measured FPS</span><b>{fps ? fps.toFixed(1) : '—'}</b></p>
-            <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—'}</b></p>
+            <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{(result as any)?.engine || (source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—')}</b></p>
           </div>
         </div>
         <div className="card">

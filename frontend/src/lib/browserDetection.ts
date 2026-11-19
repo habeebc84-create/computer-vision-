@@ -99,6 +99,8 @@ export interface BrowserDetectResult {
   fps: number
   annotatedDataUrl: string
   source: 'browser'
+  /** Human-readable engine label, e.g. 'In-browser (ONNX)' or 'In-browser (Grounding DINO)'. */
+  engine?: string
 }
 
 /** Draw boxes + labels over the original image and return a JPEG data URL. */
@@ -154,6 +156,7 @@ export async function detectInBrowser(
     ...summarise(dets, inferenceMs),
     annotatedDataUrl: annotate(source, w, h, dets),
     source: 'browser',
+    engine: 'In-browser (ONNX)',
   }
 }
 

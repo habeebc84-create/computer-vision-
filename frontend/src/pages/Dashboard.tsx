@@ -26,7 +26,7 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
         <StatCard label="Videos processed" value={String(s?.videos ?? 0)} icon={<FileVideo size={20} />} accent="bg-violet-500/15 text-violet-300" />
         <StatCard label="Object classes" value={String(s?.num_classes ?? 0)} icon={<Layers size={20} />} accent="bg-emerald-500/15 text-emerald-300" />
         <StatCard label="Avg FPS" value={s?.avg_fps ? s.avg_fps.toFixed(1) : '—'} sub="Measured, not guaranteed" icon={<Gauge size={20} />} accent="bg-amber-500/15 text-amber-300" />
-        <StatCard label="Server model" value={!model ? '—' : model.loaded ? 'Ready' : 'Not loaded'} sub={model?.model_path?.split('/').pop()} icon={<Cpu size={20} />} accent={!model ? 'bg-slate-500/15 text-slate-300' : model.loaded ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'} />
+        <StatCard label="Model status" value={model?.loaded ? 'Ready' : 'Not loaded'} sub={model?.model_path?.split('/').pop()} icon={<Cpu size={20} />} accent={model?.loaded ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'} />
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="card lg:col-span-2">

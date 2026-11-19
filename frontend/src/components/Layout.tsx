@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Activity, BarChart3, Camera, Database, FileVideo, Gauge, History, Home, Image as ImageIcon, Layers, ScanEye, Settings as SettingsIcon, Video, X, Menu, Cpu } from 'lucide-react'
-import { api, isBackendOnline, ModelStatus } from '../lib/api'
+import { api, ModelStatus } from '../lib/api'
 
 export type PageId = 'dashboard' | 'live' | 'image' | 'video' | 'dataset' | 'training' | 'inference' | 'history' | 'analytics' | 'settings'
 export const NAV: { id: PageId; label: string; icon: any; group: string }[] = [
@@ -23,15 +23,8 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
   // Real backend reachability — never faked: 'checking' until /api/health answers.
   const [backend, setBackend] = useState<'checking' | 'online' | 'offline'>('checking')
   useEffect(() => {
-    let active = true
-    isBackendOnline().then(async online => {
-      if (!active) return
-      setBackend(online ? 'online' : 'offline')
-      if (!online) { setModel(null); return }
-      const status = await api.modelStatus().catch(() => null)
-      if (active) setModel(status)
-    })
-    return () => { active = false }
+    api.health().then(() => setBackend('online')).catch(() => setBackend('offline'))
+    api.modelStatus().then(setModel).catch(() => null)
   }, [page])
   const groups = ['Detect', 'Modules', 'Data', 'System']
   const sidebar = (
@@ -53,7 +46,7 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
           </div>
         ))}
       </nav>
-      {!collapsed && backend === 'online' && model && (
+      {!collapsed && (
         <div className="m-3 rounded-xl bg-white/5 border border-white/10 p-3 text-xs">
           <p className="flex items-center gap-1.5 font-semibold text-slate-200"><Cpu size={13} /> Model</p>
           <p className="mt-1 truncate text-slate-400" title={model?.model_path}>{model?.loaded ? 'Loaded' : 'Not loaded'} — {model?.model_path?.split('/').pop() || 'yolov8n.pt'}</p>
@@ -78,11 +71,11 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
             {backend === 'online'
               ? <span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30"><Activity size={12} /> Backend connected</span>
               : backend === 'offline'
-                ? <span className="chip"><Cpu size={12} /> Browser mode</span>
+                ? <span className="chip !bg-amber-500/15 !text-amber-300 !border-amber-500/30"><Activity size={12} /> Backend offline</span>
                 : <span className="chip"><Activity size={12} /> Checking backend…</span>}
-            {backend === 'online' && model && <span className={`chip ${model?.loaded ? '' : '!bg-red-500/15 !text-red-300 !border-red-500/30'}`}>
+            <span className={`chip ${model?.loaded ? '' : '!bg-red-500/15 !text-red-300 !border-red-500/30'}`}>
               <Activity size={12} /> {model?.loaded ? `Model ready · ${model.device}` : 'Model not loaded'}
-            </span>}
+            </span>
             <button className="btn-primary hidden sm:inline-flex" onClick={() => setPage('live')}><Video size={15} /> Quick start</button>
           </div>
         </header>

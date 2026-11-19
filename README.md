@@ -93,11 +93,12 @@ over Vercel's serverless function size limit), training and video processing
 run for minutes (over the request timeout), and the backend keeps a model in
 memory and writes to SQLite/disk, which serverless functions don't do.
 
-When the API is unavailable, the header shows **Browser mode**. COCO image
-and webcam detection can run in the browser; training, video processing,
-open-vocabulary detection and saved history require the Python service.
+What you see on a Vercel deploy: the dashboard loads, the header shows an
+amber **"Backend offline"** banner, and every detection/training/history
+action fails with a clear message instead of a wall of HTML — the frontend
+never pretends the backend is there.
 
-**To enable backend features on a Vercel frontend:**
+**To make a Vercel frontend actually detect objects, point it at a backend:**
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
@@ -146,11 +147,64 @@ How it works:
 - The ONNX code is lazy-loaded — the runtime only downloads when the backend
   is actually unreachable, so the normal (backend) path costs nothing extra.
 
+### Open-vocabulary in the browser (Grounding DINO)
+
+**“Any object — type its name” also works with no backend.** When the backend
+is unreachable and the user picks open-vocab mode, the Image and Live pages
+run real Grounding DINO inference in the browser instead of erroring:
+
+- Model: `onnx-community/grounding-dino-tiny-ONNX` via
+  `@huggingface/transformers` 4.3.2 (`zero-shot-object-detection` pipeline,
+  `dtype: 'q8'`), loaded lazily only when open-vocab mode is used offline.
+  The q8 weights (`model_quantized.onnx`, ~204 MB) + tokenizer (~1 MB) download
+  once from Hugging Face (CORS-enabled) and are cached by Transformers.js in
+  Cache Storage — about **~205 MB total, once only**. Nothing is committed to
+  the repo. (The `Xenova/grounding-dino-tiny` repo named in older docs is no
+  longer reachable — 401 — so the maintained `onnx-community` build is used.)
+- Results use the same shape as the COCO path (detections with
+  `class_name` = the matched prompt text, confidence, bbox in original-image
+  pixels, annotated image, `source: 'browser'`, engine
+  `In-browser (Grounding DINO)`). Pipeline boxes are already in original
+  pixels; the code only clamps them into the image, and drops near-duplicate
+  boxes for the same prompt (IoU > 0.5).
+- The confidence threshold comes from Settings (saved in `localStorage`),
+  default 0.25. Type specific phrases (“red bus” beats “thing”); up to 20
+  prompts at a time. Preset chips on the Image/Live pages try objects that
+  are **not** in the 80 COCO classes (microphone, sunglasses, headphones,
+  traffic cone, whiteboard, coffee mug).
+
 Limits — stated honestly:
 
-- **COCO 80 classes only.** Open-vocabulary (YOLO-World, "type any object")
-  has no browser build and stays backend-only; choosing it while offline
-  shows a clear error instead of a fake result.
+- **Slow.** Grounding DINO tiny is a ~172M-parameter vision-language model,
+  and the browser checks one object at a time: expect several seconds per
+  prompt on a typical laptop CPU (9–20 s per prompt measured in Node on a
+  throttled shared CPU; faster on a real laptop, still seconds). Photos are
+  fine; live video is snapshots, not smooth video. The COCO YOLOv8 path stays
+  the fast default for the 80 classes.
+- **Experimental accuracy.** It can confuse lookalike objects and invents
+  weak boxes for things that are not there if the threshold is set low; the
+  Node verification below checks that a prompt with no match (“elephant” on
+  the bus photo) is not invented.
+- **Big first download.** ~205 MB once, versus ~12 MB for the COCO model.
+  After that it is cached and loads offline.
+
+Verified in Node (same library, same model, `dtype: 'q8'`, threshold 0.25,
+Ultralytics bus photo 810×1080, one detector call per prompt):
+`bus.` → bus 90.2%; `person.` → 4 people (83.9 / 80.1 / 78.9 / 59.8%);
+`elephant.` → 0 detections — nothing invented. Total 5 detections in 32 s
+for 3 prompts on a throttled shared CPU (9–12 s per prompt; faster on a
+real laptop). Boxes are in original-image pixels (one was `xmin: -1`, which
+the browser code clamps). Two things the test caught and the code handles:
+prompts must be passed one call at a time (an array errors — the exported
+text encoder has a fixed batch size of 1), and each phrase needs its trailing
+period (without it the text encoder errors). A single joined query
+(`"bus. person. elephant."`) was also tried and rejected: it found only the
+bus and missed all 4 people, in both q8 and fp32.
+
+Limits — stated honestly (COCO path):
+
+- **COCO 80 classes only** for the fast path. Open-vocabulary now also works
+  in the browser (see above) — the old “stays backend-only” note no longer applies.
 - **Slower than the backend.** Measured ~180 ms/frame with native CPU
   inference in Node; in-browser wasm is slower (~2 fps effective for live
   video on a typical laptop). Photos are fine; live video is snapshots, not

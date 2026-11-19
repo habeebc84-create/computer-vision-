@@ -62,26 +62,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 // Cached backend reachability: health is cheap, but Live checks it every
 // frame tick — cache the answer for 10 s so the check costs nothing.
 let _healthCache: { at: number; online: boolean } | null = null
-let healthProbe: Promise<boolean> | null = null
-export function isBackendOnline(): Promise<boolean> {
-  const cached = backendOnlineCached()
-  if (cached !== null) return Promise.resolve(cached)
-  if (!healthProbe) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 5000)
-    healthProbe = api.health(controller.signal)
-      .then(health => health?.status === 'ok', () => false)
-      .then(online => { _healthCache = { at: Date.now(), online }; return online })
-      .finally(() => { clearTimeout(timer); healthProbe = null })
-  }
-  return healthProbe
+export async function isBackendOnline(): Promise<boolean> {
+  const now = Date.now()
+  if (_healthCache && now - _healthCache.at < 10_000) return _healthCache.online
+  let online = false
+  try { await api.health(); online = true } catch { online = false }
+  _healthCache = { at: now, online }
+  return online
 }
 export function backendOnlineCached(): boolean | null {
   return _healthCache && Date.now() - _healthCache.at < 10_000 ? _healthCache.online : null
 }
 
 export const api = {
-  health: (signal?: AbortSignal) => req<{ status: string; model_loaded: boolean; device: string }>('/api/health', { signal, cache: 'no-store' }),
+  health: () => req<{ status: string; model_loaded: boolean; device: string }>('/api/health'),
   modelStatus: () => req<ModelStatus>('/api/model/status'),
   loadModel: (path: string) => req<ModelStatus>('/api/model/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) }),
   getSettings: () => req<any>('/api/settings'),
