@@ -7,7 +7,8 @@ export default function Live() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const timerRef = useRef<any>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sessionRef = useRef(0)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<DetectResult | null>(null)
   const [fps, setFps] = useState(0)
@@ -40,20 +41,29 @@ export default function Live() {
     })
   }
 
-  const captureLoop = async () => {
-    const v = videoRef.current; if (!v || v.readyState < 2) return
+  const captureLoop = async (session: number) => {
+    if (session !== sessionRef.current) return
+    const v = videoRef.current
+    let delay = 160
     try {
+      if (!v || v.readyState < 2 || !v.videoWidth || !v.videoHeight) return
       const off = document.createElement('canvas')
       off.width = v.videoWidth; off.height = v.videoHeight
       off.getContext('2d')!.drawImage(v, 0, 0)
       const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
       if (!blob) return
-      const t0 = performance.now()
       const res = await api.detectFrame(blob)
-      setResult(res); setFps(res.fps)
+      if (session !== sessionRef.current) return
+      setError(''); setResult(res); setFps(res.fps)
       draw(res.detections, v.videoWidth, v.videoHeight)
-      void t0
-    } catch (e: any) { setError(e.message || 'Frame inference failed.') }
+    } catch (e: any) {
+      delay = 2000
+      if (session === sessionRef.current) setError(e.message || 'Frame inference failed.')
+    } finally {
+      // Only send the next frame after inference completes. Overlapping requests
+      // queue up on the model and can display stale results or exhaust memory.
+      if (session === sessionRef.current) timerRef.current = setTimeout(() => captureLoop(session), delay)
+    }
   }
 
   const start = async () => {
@@ -63,15 +73,23 @@ export default function Live() {
       streamRef.current = stream
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
       setRunning(true)
-      timerRef.current = setInterval(captureLoop, 160) // ~6 fps, throttled for CPU inference
+      const session = ++sessionRef.current
+      void captureLoop(session)
     } catch (e: any) {
+      streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null
+      if (videoRef.current) videoRef.current.srcObject = null
       setError(e?.name === 'NotAllowedError' ? 'Camera access was denied by the browser. Allow camera access, or use Image / Video detection instead.' : `Could not start webcam: ${e?.message || e}`)
     } finally { setBusy(false) }
   }
   const stop = () => {
-    if (timerRef.current) clearInterval(timerRef.current)
+    sessionRef.current++
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = null
     streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null
-    setRunning(false)
+    if (videoRef.current) videoRef.current.srcObject = null
+    const canvas = canvasRef.current
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+    setResult(null); setFps(0); setRunning(false)
   }
   const saveSnapshot = async () => {
     const v = videoRef.current; if (!v) return
@@ -99,11 +117,11 @@ export default function Live() {
         </div>
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-black aspect-video">
-          <video ref={videoRef} playsInline muted className="h-full w-full object-contain" />
-          <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+          <video ref={videoRef} playsInline muted className="absolute inset-0 m-auto max-h-full max-w-full" />
+          <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full" />
           {!running && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400"><CameraOff size={36} /><p className="text-sm">Webcam is off — press “Start webcam” to begin real-time detection.</p><p className="text-xs text-slate-500">Your camera stays in this browser; frames are sent to the local backend for YOLOv8 inference.</p></div>}
         </div>
-        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Frames are captured at ~6 fps and sent to the local YOLOv8 backend. No fake stream is ever shown.</p>
+        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Frames are sent to the YOLOv8 backend; the rate depends on inference speed. No fake stream is ever shown.</p>
       </div>
       <div className="space-y-4">
         <div className="card">

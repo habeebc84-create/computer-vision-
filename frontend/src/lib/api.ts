@@ -5,7 +5,9 @@ export interface Summary { total_detections: number; total_records: number; imag
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, init)
+  let r: Response
+  try { r = await fetch(path, init) }
+  catch { throw new Error('Could not reach the detection server. Check that the backend is running and try again.') }
   const text = await r.text()
   let data: any = {}
   try { data = text ? JSON.parse(text) : {} } catch { data = { detail: text } }
