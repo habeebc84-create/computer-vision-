@@ -25,6 +25,24 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
     api.health().then(() => setBackend('online')).catch(() => setBackend('offline'))
     api.modelStatus().then(setModel).catch(() => null)
   }, [page])
+  // In-browser model state — the header badge used to read only the backend,
+  // so it said "Model not loaded" forever when the backend was offline, even
+  // after the browser model had loaded and detection worked. When the backend
+  // is offline, preload the browser model in the background and track its real
+  // state (dynamic import so onnxruntime-web stays out of the main bundle).
+  const [browserModel, setBrowserModel] = useState<{ state: string; error: string }>({ state: 'not-downloaded', error: '' })
+  useEffect(() => {
+    if (backend !== 'offline') return
+    let unsub: (() => void) | null = null
+    let cancelled = false
+    import('../lib/browserDetection').then(m => {
+      if (cancelled) return
+      setBrowserModel(m.getBrowserModelState())
+      unsub = m.subscribeBrowserModelState(setBrowserModel)
+      m.ensureBrowserModel().catch(() => null) // failures surface via subscription
+    }).catch(() => null)
+    return () => { cancelled = true; unsub?.() }
+  }, [backend])
   const groups = ['Detect', 'Modules', 'Data', 'System']
   const sidebar = (
     <div className="flex h-full flex-col">
@@ -48,8 +66,8 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
       {!collapsed && (
         <div className="m-3 rounded-xl bg-white/5 border border-white/10 p-3 text-xs">
           <p className="flex items-center gap-1.5 font-semibold text-slate-200"><Cpu size={13} /> Model</p>
-          <p className="mt-1 truncate text-slate-400" title={model?.model_path}>{model?.loaded ? 'Loaded' : 'Not loaded'} — {model?.model_path?.split('/').pop() || 'yolov8n.pt'}</p>
-          <p className="text-slate-500">{model?.device || 'cpu'} · {model?.classes ?? 0} classes</p>
+          <p className="mt-1 truncate text-slate-400" title={backend === 'offline' ? 'yolov8n.onnx (in-browser)' : model?.model_path}>{backend === 'offline' ? (browserModel.state === 'ready' ? 'Loaded' : browserModel.state === 'downloading' ? 'Loading…' : browserModel.state === 'error' ? 'Failed to load' : 'Not loaded') : (model?.loaded ? 'Loaded' : 'Not loaded')} — {backend === 'offline' ? 'yolov8n.onnx (in-browser)' : (model?.model_path?.split('/').pop() || 'yolov8n.pt')}</p>
+          <p className="text-slate-500">{backend === 'offline' ? 'browser · 80 classes' : `${model?.device || 'cpu'} · ${model?.classes ?? 0} classes`}</p>
         </div>
       )}
     </div>
@@ -72,9 +90,21 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
               : backend === 'offline'
                 ? <span className="chip !bg-amber-500/15 !text-amber-300 !border-amber-500/30"><Activity size={12} /> Backend offline</span>
                 : <span className="chip"><Activity size={12} /> Checking backend…</span>}
-            <span className={`chip ${model?.loaded ? '' : '!bg-red-500/15 !text-red-300 !border-red-500/30'}`}>
-              <Activity size={12} /> {model?.loaded ? `Model ready · ${model.device}` : 'Model not loaded'}
-            </span>
+            {backend === 'online' ? (
+              <span className={`chip ${model?.loaded ? '' : '!bg-red-500/15 !text-red-300 !border-red-500/30'}`}>
+                <Activity size={12} /> {model?.loaded ? `Model ready · ${model.device}` : 'Model not loaded'}
+              </span>
+            ) : backend === 'offline' ? (
+              browserModel.state === 'ready'
+                ? <span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30"><Activity size={12} /> Model ready · in-browser</span>
+                : browserModel.state === 'downloading'
+                  ? <span className="chip !bg-amber-500/15 !text-amber-300 !border-amber-500/30"><Activity size={12} /> Loading model…</span>
+                  : browserModel.state === 'error'
+                    ? <span className="chip !bg-red-500/15 !text-red-300 !border-red-500/30" title={browserModel.error}><Activity size={12} /> Model failed to load</span>
+                    : <span className="chip !bg-red-500/15 !text-red-300 !border-red-500/30"><Activity size={12} /> Model not loaded</span>
+            ) : (
+              <span className="chip"><Activity size={12} /> Checking backend…</span>
+            )}
             <button className="btn-primary hidden sm:inline-flex" onClick={() => setPage('live')}><Video size={15} /> Quick start</button>
           </div>
         </header>

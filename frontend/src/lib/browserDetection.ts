@@ -3,8 +3,8 @@
 // simulation: the yolov8n.onnx weights are downloaded once from Habeeb's own
 // Hugging Face model repo (habeebc12/yolov8n-onnx, which serves the file with
 // CORS enabled — GitHub release downloads do not, and browsers block them)
-// and cached in Cache Storage. COCO 80 classes only —
-// open-vocabulary (YOLO-World) stays backend-only.
+// and cached in Cache Storage. COCO 80 classes only — open-vocabulary runs
+// in the browser too, via Grounding DINO (see browserOpenVocab.ts).
 import * as ort from 'onnxruntime-web'
 import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetections, summarise, Detection, getLocalSettings } from './yoloPost'
 
@@ -23,6 +23,19 @@ let modelError = ''
 
 export function getBrowserModelState(): { state: ModelState; error: string } {
   return { state: modelState, error: modelError }
+}
+
+type BrowserModelListener = (s: { state: ModelState; error: string }) => void
+const browserModelListeners = new Set<BrowserModelListener>()
+function notifyBrowserModelState() {
+  const s = getBrowserModelState()
+  browserModelListeners.forEach(cb => { try { cb(s) } catch { /* listener errors must not break detection */ } })
+}
+
+/** Subscribe to browser-model state changes. Returns an unsubscribe function. */
+export function subscribeBrowserModelState(cb: BrowserModelListener): () => void {
+  browserModelListeners.add(cb)
+  return () => { browserModelListeners.delete(cb) }
 }
 
 async function fetchModelBytes(onProgress?: (loaded: number, total: number) => void): Promise<ArrayBuffer> {
@@ -59,17 +72,19 @@ async function fetchModelBytes(onProgress?: (loaded: number, total: number) => v
 export function ensureBrowserModel(onProgress?: (loaded: number, total: number) => void): Promise<ort.InferenceSession> {
   if (!sessionPromise) {
     modelState = 'downloading'
+    notifyBrowserModelState()
     // Single-threaded wasm: no SharedArrayBuffer / COOP-COEP requirements,
     // works on plain HTTPS pages such as Vercel.
     ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`
     ort.env.wasm.numThreads = 1
     sessionPromise = fetchModelBytes(onProgress)
       .then(bytes => ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }))
-      .then(s => { modelState = 'ready'; return s })
+      .then(s => { modelState = 'ready'; notifyBrowserModelState(); return s })
       .catch(e => {
         modelState = 'error'
         modelError = e?.message || String(e)
         sessionPromise = null
+        notifyBrowserModelState()
         throw e
       })
   }
