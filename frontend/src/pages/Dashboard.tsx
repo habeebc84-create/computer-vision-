@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, Camera, Cpu, Gauge, Image as ImageIcon, FileVideo, Layers, Play, ScanEye, Target, TrendingUp } from 'lucide-react'
+import { Activity, Camera, Cpu, Gauge, Image as ImageIcon, Layers, Play, ScanEye, Target, TrendingUp } from 'lucide-react'
 import { api, Summary } from '../lib/api'
 import { StatCard, EmptyState } from '../components/ui'
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -23,7 +23,6 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Total detections" value={String(s?.total_detections ?? 0)} icon={<Target size={20} />} />
         <StatCard label="Images processed" value={String(s?.images ?? 0)} icon={<ImageIcon size={20} />} accent="bg-cyan-500/15 text-cyan-300" />
-        <StatCard label="Videos processed" value={String(s?.videos ?? 0)} icon={<FileVideo size={20} />} accent="bg-violet-500/15 text-violet-300" />
         <StatCard label="Object classes" value={String(s?.num_classes ?? 0)} icon={<Layers size={20} />} accent="bg-emerald-500/15 text-emerald-300" />
         <StatCard label="Avg FPS" value={s?.avg_fps ? s.avg_fps.toFixed(1) : '—'} sub="Measured, not guaranteed" icon={<Gauge size={20} />} accent="bg-amber-500/15 text-amber-300" />
         <StatCard label="Model status" value={model?.loaded ? 'Ready' : 'Not loaded'} sub={model?.model_path?.split('/').pop()} icon={<Cpu size={20} />} accent={model?.loaded ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'} />
@@ -35,7 +34,7 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
             <div className="mt-4 h-56"><ResponsiveContainer width="100%" height="100%">
               <LineChart data={act}><CartesianGrid stroke="#1e293b" /><XAxis dataKey="date" stroke="#8b98b8" fontSize={11} /><YAxis stroke="#8b98b8" fontSize={11} /><Tooltip contentStyle={{ background: '#0e1730', border: '1px solid #334155' }} /><Line type="monotone" dataKey="objects" stroke="#0ea5e9" strokeWidth={2} name="Objects" /><Line type="monotone" dataKey="sessions" stroke="#8b5cf6" strokeWidth={2} name="Sessions" /></LineChart>
             </ResponsiveContainer></div>
-          ) : <div className="mt-4"><EmptyState title="No detection activity yet" body="Run a live, image or video detection and activity will appear here from real records." action={<button className="btn-primary" onClick={() => go('live')}><Play size={15} /> Start live detection</button>} /></div>}
+          ) : <div className="mt-4"><EmptyState title="No detection activity yet" body="Run a live or image detection and activity will appear here from real records." action={<button className="btn-primary" onClick={() => go('live')}><Play size={15} /> Start live detection</button>} /></div>}
         </div>
         <div className="card">
           <h2 className="flex items-center gap-2 font-semibold"><ScanEye size={16} className="text-cyan-400" /> Class distribution</h2>
@@ -53,7 +52,6 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
           <div className="mt-4 flex gap-2">
             <button className="btn-primary flex-1 justify-center" onClick={() => go('live')}><Camera size={15} /> Live</button>
             <button className="btn-ghost flex-1 justify-center" onClick={() => go('image')}><ImageIcon size={15} /> Image</button>
-            <button className="btn-ghost flex-1 justify-center" onClick={() => go('video')}><FileVideo size={15} /> Video</button>
           </div>
         </div>
       </div>

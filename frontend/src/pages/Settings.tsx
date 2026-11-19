@@ -54,7 +54,7 @@ export default function Settings() {
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="card">
         <h2 className="font-semibold">Detection settings</h2>
-        <p className="mt-1 text-sm text-slate-400">These values are sent to the backend and used by every real YOLOv8 inference call (live, image and video). They are also saved on this device, so in-browser detection uses them when the backend is offline.</p>
+        <p className="mt-1 text-sm text-slate-400">These values are sent to the backend and used by every real YOLOv8 inference call (live and image). They are also saved on this device, so in-browser detection uses them when the backend is offline.</p>
         <div className="mt-4 space-y-4">
           <div>
             <label className="label">Model</label>

@@ -3,7 +3,6 @@ import { Layout, Toasts, PageId } from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Live from './pages/Live'
 import ImageDetect from './pages/ImageDetect'
-import VideoDetect from './pages/VideoDetect'
 import Dataset from './pages/Dataset'
 import Training from './pages/Training'
 import Inference from './pages/Inference'
@@ -18,7 +17,6 @@ export default function App() {
       {page === 'dashboard' && <Dashboard go={setPage} />}
       {page === 'live' && <Live />}
       {page === 'image' && <ImageDetect />}
-      {page === 'video' && <VideoDetect />}
       {page === 'dataset' && <Dataset />}
       {page === 'training' && <Training />}
       {page === 'inference' && <Inference go={setPage} />}

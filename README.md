@@ -3,7 +3,7 @@
 **ITA0523 — Computer Vision capstone project**
 
 A full-stack, production-style web application that detects objects in real time
-from a webcam, in uploaded images, and in uploaded videos — using real YOLOv8
+from a webcam and in uploaded images — using real YOLOv8
 inference (Ultralytics, PyTorch, OpenCV). No fake detections, no simulated
 results: every bounding box, label and confidence score comes from the model.
 
@@ -17,8 +17,9 @@ results: every bounding box, label and confidence score comes from the model.
    a background thread; live epoch / loss / precision / recall / mAP50 /
    mAP50-95 from `results.csv`; `best.pt` saved, downloadable and loadable.
 3. **Module 3 — Inference & Visualization** — live webcam (browser camera,
-   frames sent to the backend), image detection with annotated output, video
-   detection frame-by-frame with progress and downloadable processed video.
+   frames sent to the backend) and image detection with annotated output.
+   Video detection was removed from the website; the backend still processes
+   videos when run locally (see API table).
 
 Plus: Overview Dashboard, Detection History (SQLite), Analytics & Reports
 (CSV + PDF), Settings (model, conf/IoU thresholds, image size, device).
@@ -83,7 +84,7 @@ required once for that download. The `.pt` file is git-ignored on purpose.
 **Short version: Vercel hosts only the static frontend. There is no Python
 backend there, so every `/api/*` call fails — but image and live detection
 now fall back to running YOLOv8 in the browser (see "In-browser detection"
-below), so detection still works on the Vercel site. Training, video and
+below), so detection still works on the Vercel site. Training and
 history still need a backend.**
 
 This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
@@ -209,9 +210,10 @@ Limits — stated honestly (COCO path):
   inference in Node; in-browser wasm is slower (~2 fps effective for live
   video on a typical laptop). Photos are fine; live video is snapshots, not
   smooth video, until run on a faster machine.
-- **Video, training and history still need the backend.** They are not
+- **Training and history still need the backend.** They are not
   faked in the browser: those pages keep saying the backend is required.
-  In-browser results are not saved to history.
+  In-browser results are not saved to history. Video detection was removed
+  from the website entirely.
 - **Tiny edge objects can differ from the backend.** Verified on the
   Ultralytics bus photo: the browser found the bus (84%) and all 4 people
   (88/88/87/43%), matching the backend's 6 detections except the tiny
@@ -303,8 +305,6 @@ Notes and limits (honest):
   and inference ms. Save snapshot stores that frame in history.
 - **Image Detection** — upload JPG/PNG, Run detection, download the
   annotated image.
-- **Video Detection** — upload MP4/AVI/MOV, watch real frame progress,
-  download the processed MP4.
 - **Dataset Preparation** — upload images, add classes, click an image and
   drag to draw boxes, Save annotations, set the train % and Split — this
   writes `dataset/data.yaml` and the `images/{train,val}` +
@@ -364,7 +364,7 @@ into `dataset/labels/all/` and the matching images into
   `yolov8n.pt` (~6 MB). Check internet, then retry. `models/` must be writable.
 - **Webcam won't start** — the browser must be allowed camera access, and
   the page must be served over `localhost` (or HTTPS). If denied, use Image
-  or Video detection instead; the error is shown in the UI.
+  detection instead; the error is shown in the UI.
 - **Training fails: "dataset/data.yaml not found"** — complete Module 1
   (upload + classes + split) first. Training needs annotated images; images
   with no annotations produce a warning at split time.
@@ -402,7 +402,7 @@ default 7860 on Spaces).
 4. When the Space is running, copy its URL (e.g.
    `https://<user>-object-detection-backend.hf.space`) and set it as
    `VITE_API_URL` in the Vercel project, then redeploy the frontend.
-   The site then shows "Backend connected" and detection, training, video
+   The site then shows "Backend connected" and detection, training
    and history all work live.
 
 Notes: Space storage is ephemeral — detection history and uploads reset when

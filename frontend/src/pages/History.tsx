@@ -25,7 +25,7 @@ export default function History() {
     <div className="space-y-4">
       <div className="card flex flex-wrap gap-3">
         <div className="relative min-w-[200px] flex-1"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" /><input className="input !pl-9" placeholder="Search by class or type…" value={search} onChange={e => setSearch(e.target.value)} /></div>
-        <select className="input max-w-[160px]" value={type} onChange={e => setType(e.target.value)}><option value="">All types</option><option value="image">Image</option><option value="video">Video</option><option value="live">Live</option></select>
+        <select className="input max-w-[160px]" value={type} onChange={e => setType(e.target.value)}><option value="">All types</option><option value="image">Image</option><option value="live">Live</option></select>
         <input type="date" className="input max-w-[160px]" value={from} onChange={e => setFrom(e.target.value)} aria-label="From date" />
         <input type="date" className="input max-w-[160px]" value={to} onChange={e => setTo(e.target.value)} aria-label="To date" />
         <button className="btn-primary" onClick={load}>Apply filters</button>
@@ -48,7 +48,7 @@ export default function History() {
             </tbody>
           </table>
         </div>
-      ) : <EmptyState title="No detection history yet" body="Detection sessions are stored in SQLite (database/detections.db) after real image, video or saved live detections. Nothing is shown here until then." />}
+      ) : <EmptyState title="No detection history yet" body="Detection sessions are stored in SQLite (database/detections.db) after real image or saved live detections. Nothing is shown here until then." />}
       {open && (
         <div className="card">
           <h2 className="font-semibold">Record #{open.id} — details</h2>

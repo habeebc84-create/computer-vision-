@@ -118,7 +118,7 @@ export default function Live() {
       setRunning(true)
       timerRef.current = setInterval(captureLoop, 160) // ~6 fps, throttled for CPU inference
     } catch (e: any) {
-      setError(e?.name === 'NotAllowedError' ? 'Camera access was denied by the browser. Allow camera access, or use Image / Video detection instead.' : `Could not start webcam: ${e?.message || e}`)
+      setError(e?.name === 'NotAllowedError' ? 'Camera access was denied by the browser. Allow camera access, or use Image detection instead.' : `Could not start webcam: ${e?.message || e}`)
     } finally { setBusy(false) }
   }
   const stop = () => {
