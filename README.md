@@ -129,11 +129,14 @@ connected", so a browser result is never passed off as a backend result.
 
 How it works:
 
-- The browser downloads `yolov8n.onnx` (~12 MB, once only) from Ultralytics'
-  public releases
-  (`https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx`)
+- The browser downloads `yolov8n.onnx` (~12 MB, once only) from Habeeb's own
+  Hugging Face model repo
+  (`https://huggingface.co/habeebc12/yolov8n-onnx/resolve/main/yolov8n.onnx`)
   and caches it in Cache Storage. The `.onnx` file is **not** committed to
-  the repo.
+  the repo. (First version fetched it from Ultralytics' GitHub release
+  download — that host sends no CORS headers, so browsers blocked the
+  download with "Failed to fetch"; Hugging Face serves it with
+  `Access-Control-Allow-Origin: *`, which is why the model lives there.)
 - Inference runs with ONNX Runtime Web (`onnxruntime-web` 1.20.1, single-
   threaded wasm; its wasm files load from the jsDelivr CDN), using the same
   preprocessing and NMS as the backend: 640×640 letterbox (grey 114 padding,

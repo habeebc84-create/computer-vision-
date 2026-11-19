@@ -1,7 +1,9 @@
 // In-browser YOLOv8 detection (ONNX Runtime Web) — used ONLY when the Python
 // backend is unreachable. Real YOLOv8 inference running in this browser, not a
-// simulation: the yolov8n.onnx weights are downloaded once from Ultralytics'
-// public releases and cached in Cache Storage. COCO 80 classes only —
+// simulation: the yolov8n.onnx weights are downloaded once from Habeeb's own
+// Hugging Face model repo (habeebc12/yolov8n-onnx, which serves the file with
+// CORS enabled — GitHub release downloads do not, and browsers block them)
+// and cached in Cache Storage. COCO 80 classes only —
 // open-vocabulary (YOLO-World) stays backend-only.
 import * as ort from 'onnxruntime-web'
 import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetections, summarise, Detection, getLocalSettings } from './yoloPost'
@@ -9,9 +11,9 @@ import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetec
 export { COCO_NAMES, getLocalSettings }
 
 export const ONNX_MODEL_URL =
-  'https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx'
+  'https://huggingface.co/habeebc12/yolov8n-onnx/resolve/main/yolov8n.onnx'
 const ONNX_MODEL_SIZE_MB = 12.3
-const CACHE_NAME = 'ods-yolo-model-v1'
+const CACHE_NAME = 'ods-yolo-model-v2'
 const ORT_VERSION = '1.20.1'
 
 export type ModelState = 'not-downloaded' | 'downloading' | 'ready' | 'error'
