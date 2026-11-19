@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Save } from 'lucide-react'
 import { api, AvailableModel, toast } from '../lib/api'
+import { getLocalSettings, saveLocalSettings } from '../lib/yoloPost'
 
 const FALLBACK_MODELS: AvailableModel[] = [
   { id: 'yolov8n.pt', path: 'models/yolov8n.pt', kind: 'coco', name: 'YOLOv8n (nano)', classes: 80, description: 'Fastest COCO model — 80 fixed classes. Default.', size_mb: 6, downloaded: false },
@@ -17,7 +18,12 @@ export default function Settings() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
-    api.getSettings().then(setS).catch(() => null)
+    api.getSettings().then(setS).catch(() => {
+      // Backend offline: fall back to the settings saved on this device
+      // (they drive in-browser detection).
+      const local = getLocalSettings()
+      setS((s: any) => ({ ...s, conf: local.conf, iou: local.iou, imgsz: local.imgsz }))
+    })
     api.modelStatus().then(setModel).catch(() => null)
     api.listModels().then(setModels).catch(() => null)
   }, [])
@@ -28,11 +34,16 @@ export default function Settings() {
   }
   const save = async () => {
     setBusy(true); setError('')
+    // Always keep a copy on this device — in-browser detection reads it.
+    saveLocalSettings({ conf: s.conf, iou: s.iou, imgsz: s.imgsz })
     try {
       const saved = await api.saveSettings(s); setS(saved)
       const m = await api.modelStatus(); setModel(m)
       toast('Settings saved and applied to inference')
-    } catch (e: any) { setError(e.message); toast(e.message, 'err') } finally { setBusy(false) }
+    } catch (e: any) {
+      setError('')
+      toast('Backend offline — settings saved on this device only; they apply to in-browser detection', 'err')
+    } finally { setBusy(false) }
   }
   const loadModel = async () => {
     setBusy(true); setError('')
@@ -43,7 +54,7 @@ export default function Settings() {
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="card">
         <h2 className="font-semibold">Detection settings</h2>
-        <p className="mt-1 text-sm text-slate-400">These values are sent to the backend and used by every real YOLOv8 inference call (live, image and video).</p>
+        <p className="mt-1 text-sm text-slate-400">These values are sent to the backend and used by every real YOLOv8 inference call (live, image and video). They are also saved on this device, so in-browser detection uses them when the backend is offline.</p>
         <div className="mt-4 space-y-4">
           <div>
             <label className="label">Model</label>

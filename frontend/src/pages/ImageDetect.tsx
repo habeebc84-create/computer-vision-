@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Download, ImagePlus, Loader2, Sparkles, Upload } from 'lucide-react'
-import { api, DetectResult, resolveUrl, toast } from '../lib/api'
+import { api, DetectResult, isBackendOnline, resolveUrl, toast } from '../lib/api'
+// NOTE: browserDetection is dynamically imported only when the backend is
+// offline, so the ~600 KB ONNX Runtime bundle stays out of the main chunk.
 import { DetectionTable } from '../components/ui'
 
 function parsePrompts(text: string): string[] {
@@ -15,6 +17,9 @@ export default function ImageDetect() {
   const [error, setError] = useState('')
   const [mode, setMode] = useState<'coco' | 'world'>('coco')
   const [classesText, setClassesText] = useState('bus, person, traffic light')
+  // Where the last result actually came from — never mislabelled.
+  const [source, setSource] = useState<'backend' | 'browser' | null>(null)
+  const [modelPct, setModelPct] = useState<number | null>(null)
 
   // If the world model was chosen in Settings, start in Any-object mode.
   useEffect(() => {
@@ -24,25 +29,37 @@ export default function ImageDetect() {
   const pick = (f: File | undefined) => {
     if (!f) return
     if (!/image\/(jpeg|png)/.test(f.type)) { setError('Please choose a JPG or PNG image.'); return }
-    setFile(f); setPreview(URL.createObjectURL(f)); setResult(null); setError('')
+    setFile(f); setPreview(URL.createObjectURL(f)); setResult(null); setError(''); setSource(null)
   }
   const run = async () => {
     if (!file) return
-    setBusy(true); setError('')
+    setBusy(true); setError(''); setModelPct(null)
     try {
       let r: DetectResult
       if (mode === 'world') {
+        // YOLO-World only runs on the backend — there is no browser build of it.
+        if (!(await isBackendOnline())) throw new Error('Any-object (YOLO-World) detection needs the Python backend — it cannot run in the browser. Switch to COCO mode to detect in-browser, or start the backend with python run.py.')
         const prompts = parsePrompts(classesText)
         if (prompts.length === 0) throw new Error('Type at least one object name to detect, e.g. "bus, dog".')
         if (prompts.length > 20) throw new Error('At most 20 object names at a time.')
         r = await api.openVocabImage(file, prompts)
-      } else {
+        setSource('backend')
+      } else if (await isBackendOnline()) {
         r = await api.detectImage(file)
+        setSource('backend')
+      } else {
+        // Backend unreachable: real YOLOv8 inference right here in the browser.
+        const { detectImageFileInBrowser } = await import('../lib/browserDetection')
+        r = await detectImageFileInBrowser(file, (loaded, total) => {
+          if (total > 0) setModelPct(Math.round((loaded / total) * 100))
+        })
+        setModelPct(null)
+        setSource('browser')
       }
       setResult(r); toast(`Detected ${r.count} object(s) in ${(r.inference_ms).toFixed(0)} ms`)
     }
     catch (e: any) { setError(e.message); toast(e.message, 'err') }
-    finally { setBusy(false) }
+    finally { setBusy(false); setModelPct(null) }
   }
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -65,17 +82,25 @@ export default function ImageDetect() {
           <input type="file" accept="image/jpeg,image/png" className="hidden" onChange={e => pick(e.target.files?.[0])} />
         </label>
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
+        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}% (~12 MB, once only — it is cached in your browser after that).</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser — no backend connected. Real YOLOv8 inference on your device; nothing was uploaded, and this result is not saved to history.</p>}
         {preview && (
           <div className="mt-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <figure><figcaption className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Original</figcaption><img src={preview} alt="Original upload" className="w-full rounded-xl border border-white/10" /></figure>
               <figure><figcaption className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Annotated — YOLOv8 output</figcaption>
-                {result?.annotated_url ? <img src={resolveUrl(result.annotated_url)} alt="Annotated detection result" className="w-full rounded-xl border border-white/10" /> : <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl border border-white/10 text-sm text-slate-500">Run detection to see bounding boxes</div>}
+                {(() => {
+                  const src = (result as any)?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
+                  return src ? <img src={src} alt="Annotated detection result" className="w-full rounded-xl border border-white/10" /> : <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl border border-white/10 text-sm text-slate-500">Run detection to see bounding boxes</div>
+                })()}
               </figure>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button className="btn-primary" onClick={run} disabled={busy || !file}>{busy ? <><Loader2 size={15} className="animate-spin" /> Detecting…</> : <><Upload size={15} /> Run detection</>}</button>
-              {result?.annotated_url && <a className="btn-ghost" href={resolveUrl(result.annotated_url)} download><Download size={15} /> Download annotated image</a>}
+              {(() => {
+                const src = (result as any)?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
+                return src ? <a className="btn-ghost" href={src} download="annotated.jpg"><Download size={15} /> Download annotated image</a> : null
+              })()}
             </div>
           </div>
         )}
@@ -91,7 +116,8 @@ export default function ImageDetect() {
               <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{(result.avg_confidence * 100).toFixed(1)}%</b></p>
               <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result.inference_ms.toFixed(0)} ms</b></p>
               <p className="flex justify-between"><span className="text-slate-400">FPS (equivalent)</span><b>{result.fps.toFixed(1)}</b></p>
-              <p className="flex justify-between"><span className="text-slate-400">History record</span><b>#{result.record_id}</b></p>
+              <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{source === 'browser' ? 'In-browser (ONNX)' : 'Backend (PyTorch)'}</b></p>
+              <p className="flex justify-between"><span className="text-slate-400">History record</span><b>{result.record_id ? `#${result.record_id}` : '— not saved (in-browser)'}</b></p>
             </div>
           ) : <p className="mt-3 text-sm text-slate-400">Upload an image and run detection — results and statistics appear here.</p>}
         </div>

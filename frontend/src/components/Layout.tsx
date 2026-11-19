@@ -81,7 +81,7 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
         </header>
         {backend === 'offline' && (
           <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200 sm:px-6">
-            <b>Backend offline</b> — detection, training and history need the Python backend. Run <code className="rounded bg-black/30 px-1">python run.py</code> locally, or set <code className="rounded bg-black/30 px-1">VITE_API_URL</code> to a hosted backend and redeploy the frontend.
+            <b>Backend offline</b> — image &amp; live detection still work: they run in your browser instead (real YOLOv8, no backend needed). Training, video and history still need the Python backend — run <code className="rounded bg-black/30 px-1">python run.py</code> locally, or set <code className="rounded bg-black/30 px-1">VITE_API_URL</code> to a hosted backend and redeploy the frontend.
           </div>
         )}
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">{children}</main>

@@ -81,7 +81,10 @@ required once for that download. The `.pt` file is git-ignored on purpose.
 ## Why detection doesn't work on Vercel
 
 **Short version: Vercel hosts only the static frontend. There is no Python
-backend there, so every `/api/*` call fails.**
+backend there, so every `/api/*` call fails — but image and live detection
+now fall back to running YOLOv8 in the browser (see "In-browser detection"
+below), so detection still works on the Vercel site. Training, video and
+history still need a backend.**
 
 This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
 backend. Vercel is a static/serverless host — it can serve the dashboard UI,
@@ -115,6 +118,49 @@ never pretends the backend is there.
 
 Running locally (`python run.py`) needs none of this: the backend serves the
 frontend itself on the same origin, and `VITE_API_URL` stays empty.
+
+## In-browser detection (no backend)
+
+**Update: image and live-webcam detection now work even when the backend is
+offline.** When the frontend cannot reach the backend, the Image and Live
+pages automatically fall back to running real YOLOv8 inference inside the
+browser — the page shows a violet chip, "Running in your browser — no backend
+connected", so a browser result is never passed off as a backend result.
+
+How it works:
+
+- The browser downloads `yolov8n.onnx` (~12 MB, once only) from Ultralytics'
+  public releases
+  (`https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx`)
+  and caches it in Cache Storage. The `.onnx` file is **not** committed to
+  the repo.
+- Inference runs with ONNX Runtime Web (`onnxruntime-web` 1.20.1, single-
+  threaded wasm; its wasm files load from the jsDelivr CDN), using the same
+  preprocessing and NMS as the backend: 640×640 letterbox (grey 114 padding,
+  like Ultralytics), NCHW float32, YOLOv8 `84×8400` output parsing,
+  confidence threshold + class-aware NMS, boxes rescaled to the original
+  image. The confidence/IoU thresholds come from Settings (saved on the
+  device in `localStorage`, so they work offline too).
+- The ONNX code is lazy-loaded — the runtime only downloads when the backend
+  is actually unreachable, so the normal (backend) path costs nothing extra.
+
+Limits — stated honestly:
+
+- **COCO 80 classes only.** Open-vocabulary (YOLO-World, "type any object")
+  has no browser build and stays backend-only; choosing it while offline
+  shows a clear error instead of a fake result.
+- **Slower than the backend.** Measured ~180 ms/frame with native CPU
+  inference in Node; in-browser wasm is slower (~2 fps effective for live
+  video on a typical laptop). Photos are fine; live video is snapshots, not
+  smooth video, until run on a faster machine.
+- **Video, training and history still need the backend.** They are not
+  faked in the browser: those pages keep saying the backend is required.
+  In-browser results are not saved to history.
+- **Tiny edge objects can differ from the backend.** Verified on the
+  Ultralytics bus photo: the browser found the bus (84%) and all 4 people
+  (88/88/87/43%), matching the backend's 6 detections except the tiny
+  stop sign at the image edge (backend 26%, browser max score 4%) — a
+  marginal object whose score depends on resize details.
 
 ## Built-in datasets (one-click download)
 
@@ -153,20 +199,6 @@ npm run dev
 ```
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
-
-On headless Linux, Ultralytics also installs the GUI `opencv-python` package,
-which can override the headless build and fail with `libGL.so.1` missing.
-After installing the requirements, use the headless build instead:
-
-```bash
-pip uninstall -y opencv-python opencv-python-headless
-pip install --no-deps 'opencv-python-headless>=4.10,<5'
-```
-
-The first detection needs network access to GitHub's release assets to download
-`yolov8n.pt`. If downloads are blocked, obtain the official pretrained weights
-on a machine with access and place them at `models/yolov8n.pt`. Only load
-model files from a trusted source.
 
 ## Open-vocabulary detection (recognise any object)
 

@@ -82,7 +82,7 @@ def save_settings(patch):
 
 class ModelManager:
     def __init__(self):
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
         self.model = None
         self.model_path = None
         self.class_names = {}
@@ -109,30 +109,19 @@ class ModelManager:
         with self._lock:
             self.load_error = None
             try:
-                # Ultralytics downloads known pretrained weights to the requested
-                # path, but cannot create a missing parent directory itself.
-                if p == BASE / "models" / "yolov8n.pt":
-                    p.parent.mkdir(parents=True, exist_ok=True)
                 self.model = YOLO(str(p))
                 self.model_path = str(p)
                 self.class_names = dict(getattr(self.model, "names", {}) or {})
                 self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 return True
             except Exception as e:
-                self.model = None
-                if p == BASE / "models" / "yolov8n.pt" and not p.is_file():
-                    self.load_error = ("Could not load the default model. Download the official "
-                                       "yolov8n.pt weights into models/yolov8n.pt, or check "
-                                       f"network access to GitHub releases. Details: {e}")
-                    raise RuntimeError(self.load_error) from e
-                self.load_error = str(e)
+                self.model = None; self.load_error = str(e)
                 raise
 
     def ensure_loaded(self):
-        with self._lock:
-            if self.model is None:
-                self.load()
-            return self.model
+        if self.model is None:
+            self.load()
+        return self.model
 
     def status(self):
         s = load_settings()
