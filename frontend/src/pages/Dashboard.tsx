@@ -11,11 +11,27 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
   const [act, setAct] = useState<any[]>([])
   const [model, setModel] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  // Backend is offline when the summary call fails; the in-browser model is
+  // then the real model, so track its state the same way the header badge does.
+  const [backendOffline, setBackendOffline] = useState(false)
+  const [browserModel, setBrowserModel] = useState<{ state: string; error: string }>({ state: 'not-downloaded', error: '' })
   useEffect(() => {
     Promise.all([api.summary(), api.classDist(), api.activity(), api.modelStatus()])
       .then(([a, b, c, d]) => { setS(a); setDist(b); setAct(c); setModel(d) })
-      .catch(() => null).finally(() => setLoading(false))
+      .catch(() => setBackendOffline(true)).finally(() => setLoading(false))
   }, [])
+  useEffect(() => {
+    if (!backendOffline) return
+    let unsub: (() => void) | null = null
+    let cancelled = false
+    import('../lib/browserDetection').then(m => {
+      if (cancelled) return
+      setBrowserModel(m.getBrowserModelState())
+      unsub = m.subscribeBrowserModelState(setBrowserModel)
+      m.ensureBrowserModel().catch(() => null) // failures surface via subscription
+    }).catch(() => null)
+    return () => { cancelled = true; unsub?.() }
+  }, [backendOffline])
   if (loading) return <div className="card animate-pulse text-sm text-slate-400">Loading dashboard…</div>
   const empty = !s || s.total_records === 0
   return (
@@ -25,7 +41,7 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
         <StatCard label="Images processed" value={String(s?.images ?? 0)} icon={<ImageIcon size={20} />} accent="bg-cyan-500/15 text-cyan-300" />
         <StatCard label="Object classes" value={String(s?.num_classes ?? 0)} icon={<Layers size={20} />} accent="bg-emerald-500/15 text-emerald-300" />
         <StatCard label="Avg FPS" value={s?.avg_fps ? s.avg_fps.toFixed(1) : '—'} sub="Measured, not guaranteed" icon={<Gauge size={20} />} accent="bg-amber-500/15 text-amber-300" />
-        <StatCard label="Model status" value={model?.loaded ? 'Ready' : 'Not loaded'} sub={model?.model_path?.split('/').pop()} icon={<Cpu size={20} />} accent={model?.loaded ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'} />
+        <StatCard label="Model status" value={backendOffline ? (browserModel.state === 'ready' ? 'Ready' : browserModel.state === 'downloading' ? 'Loading…' : browserModel.state === 'error' ? 'Failed' : 'Not loaded') : (model?.loaded ? 'Ready' : 'Not loaded')} sub={backendOffline ? 'yolov8n.onnx · in-browser' : model?.model_path?.split('/').pop()} icon={<Cpu size={20} />} accent={(backendOffline ? browserModel.state === 'ready' : model?.loaded) ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'} />
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="card lg:col-span-2">
