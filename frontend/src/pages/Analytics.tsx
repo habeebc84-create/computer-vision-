@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, FileText } from 'lucide-react'
-import { api, toast } from '../lib/api'
+import { api, resolveUrl, toast } from '../lib/api'
 import { EmptyState } from '../components/ui'
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -14,7 +14,7 @@ export default function Analytics() {
   }, [])
   const report = async (fmt: 'csv' | 'pdf') => {
     setBusy(true)
-    try { const r = await api.generateReport(fmt); toast(`Report generated — ${r.records} record(s)`); window.open(r.url, '_blank') }
+    try { const r = await api.generateReport(fmt); toast(`Report generated — ${r.records} record(s)`); window.open(resolveUrl(r.url), '_blank') }
     catch (e: any) { toast(e.message, 'err') } finally { setBusy(false) }
   }
   const empty = !summary || summary.total_records === 0

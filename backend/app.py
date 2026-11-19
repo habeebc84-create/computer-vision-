@@ -15,6 +15,7 @@ from dataset_manager import (ALLOWED, IMG_ALL, LBL_ALL, ensure_dirs, get_annotat
                              get_classes, list_images, save_annotation, set_classes,
                              split_dataset, stats, export_zip)
 from model_training import job as train_job
+import datasets as builtin_datasets
 from video_processing import VideoJob
 from image_processing import decode_image, encode_jpeg
 import analytics, report_generator
@@ -210,6 +211,25 @@ def ds_yaml():
 def ds_export():
     dest = OUT_REP / "dataset_export.zip"; export_zip(dest)
     return FileResponse(dest, media_type="application/zip", filename="dataset_export.zip")
+
+# ---------- Curated built-in datasets (one-click download) ----------
+@app.get("/api/datasets")
+def ds_catalog():
+    return builtin_datasets.catalog()
+
+@app.post("/api/datasets/{ds_id}/download")
+def ds_download(ds_id: str, force: bool = False):
+    try:
+        return builtin_datasets.start_download(ds_id, force=force)
+    except KeyError:
+        raise HTTPException(404, f"Unknown dataset: {ds_id}")
+
+@app.get("/api/datasets/{ds_id}/status")
+def ds_status(ds_id: str):
+    try:
+        return builtin_datasets.status(ds_id)
+    except KeyError:
+        raise HTTPException(404, f"Unknown dataset: {ds_id}")
 
 # ---------- Training ----------
 @app.post("/api/training/start")

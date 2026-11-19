@@ -8,6 +8,7 @@ export default function Live() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const timerRef = useRef<any>(null)
+  const inFlightRef = useRef(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<DetectResult | null>(null)
   const [fps, setFps] = useState(0)
@@ -41,19 +42,23 @@ export default function Live() {
   }
 
   const captureLoop = async () => {
+    // In-flight guard: never stack overlapping inference requests — if the
+    // previous frame is still being processed (slow CPU inference), skip
+    // this tick instead of queuing another POST.
+    if (inFlightRef.current) return
     const v = videoRef.current; if (!v || v.readyState < 2) return
+    inFlightRef.current = true
     try {
       const off = document.createElement('canvas')
       off.width = v.videoWidth; off.height = v.videoHeight
       off.getContext('2d')!.drawImage(v, 0, 0)
       const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
       if (!blob) return
-      const t0 = performance.now()
       const res = await api.detectFrame(blob)
       setResult(res); setFps(res.fps)
       draw(res.detections, v.videoWidth, v.videoHeight)
-      void t0
     } catch (e: any) { setError(e.message || 'Frame inference failed.') }
+    finally { inFlightRef.current = false }
   }
 
   const start = async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, Play, Square } from 'lucide-react'
-import { api, toast } from '../lib/api'
+import { api, resolveUrl, toast } from '../lib/api'
 
 export default function Training() {
   const [cfg, setCfg] = useState({ model: 'yolov8n.pt', epochs: 10, imgsz: 640, batch: 8, device: 'cpu' })
@@ -43,7 +43,7 @@ export default function Training() {
             <button className="btn-danger" onClick={stop} disabled={!running}><Square size={15} /> Stop safely</button>
           </div>
           {st?.best && <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-sm">Best weights: <b>best.pt</b> ({st.best.size_mb} MB)
-            <div className="mt-2 flex gap-2"><a className="btn-ghost" href="/api/training/model/download"><Download size={14} /> Download best.pt</a>
+            <div className="mt-2 flex gap-2"><a className="btn-ghost" href={resolveUrl('/api/training/model/download')}><Download size={14} /> Download best.pt</a>
             <button className="btn-ghost" onClick={async () => { try { await api.loadBest(); toast('best.pt loaded as the active model') } catch (e: any) { toast(e.message, 'err') } }}>Load as active model</button></div></div>}
           {st?.error && <p className="rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{st.error}</p>}
         </div>

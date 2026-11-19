@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, ImagePlus, Plus, Split, Trash2, Upload } from 'lucide-react'
-import { api, toast } from '../lib/api'
+import { api, BuiltinDataset, resolveUrl, toast } from '../lib/api'
 
 interface Box { class_id: number; x_min: number; y_min: number; x_max: number; y_max: number }
 
@@ -15,6 +15,26 @@ export default function Dataset() {
   const [trainPct, setTrainPct] = useState(80)
   const [yaml, setYaml] = useState('')
   const [busy, setBusy] = useState(false)
+  const [catalog, setCatalog] = useState<BuiltinDataset[]>([])
+  const [dsBusy, setDsBusy] = useState('')
+
+  const refreshCatalog = async () => {
+    try { setCatalog(await api.dsCatalog()) } catch { /* backend offline — banner in Layout explains */ }
+  }
+  useEffect(() => { refreshCatalog() }, [])
+  // Poll only while a download is in progress.
+  useEffect(() => {
+    if (!catalog.some(d => d.status === 'downloading')) return
+    const t = setInterval(refreshCatalog, 2000)
+    return () => clearInterval(t)
+  }, [catalog])
+  const downloadDataset = async (id: string, force = false) => {
+    setDsBusy(id)
+    try {
+      await api.dsDownload(id, force); toast('Dataset download started — importing in the background')
+      await refreshCatalog()
+    } catch (e: any) { toast(e.message, 'err') } finally { setDsBusy('') }
+  }
   const imgRef = useRef<HTMLImageElement>(null)
   const drawStart = useRef<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<Box | null>(null)
@@ -73,6 +93,35 @@ export default function Dataset() {
 
   return (
     <div className="space-y-4">
+      <div className="card">
+        <h2 className="font-semibold">Recommended datasets — one-click download</h2>
+        <p className="mt-1 text-sm text-slate-400">Official Ultralytics COCO samples with real images and real YOLO labels. Download one, then Split the dataset below and go to Module 2 — Training.</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {catalog.map(d => (
+            <div key={d.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold">{d.name}</p>
+                <span className="chip">{d.images} images · {d.classes} classes · {d.size_mb} MB</span>
+              </div>
+              <p className="mt-1 text-sm text-slate-400">{d.description}</p>
+              <p className="mt-1 text-xs text-slate-500">Licence: {d.license}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {d.status === 'imported'
+                  ? <><span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30">Imported ✓ {d.imported_images} images · {d.imported_labels} labels</span>
+                    <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button></>
+                  : d.status === 'downloading'
+                    ? <span className="chip">Downloading… {d.progress ?? 0}%</span>
+                    : d.status === 'failed'
+                      ? <><span className="chip !bg-red-500/15 !text-red-300 !border-red-500/30">Failed: {d.error || 'download error'}</span>
+                        <button className="btn-primary" onClick={() => downloadDataset(d.id)} disabled={dsBusy === d.id}>Retry download</button></>
+                      : <button className="btn-primary" onClick={() => downloadDataset(d.id)} disabled={dsBusy === d.id}><Download size={15} /> {dsBusy === d.id ? 'Starting…' : 'Download & import'}</button>}
+                {d.status === 'imported' && <button className="btn-ghost" onClick={refresh}>Refresh stats</button>}
+              </div>
+            </div>
+          ))}
+          {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
+        </div>
+      </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         {[['Total images', stats?.total_images ?? 0], ['Annotations', stats?.total_annotations ?? 0], ['Classes', stats?.num_classes ?? 0], ['Train images', stats?.train_images ?? 0], ['Val images', stats?.val_images ?? 0]].map(([l, v]) => (
           <div key={l as string} className="card"><p className="text-xs uppercase tracking-wider text-slate-400">{l}</p><p className="mt-1 text-2xl font-bold">{v}</p></div>
@@ -111,7 +160,7 @@ export default function Dataset() {
                 <button className="btn-ghost" onClick={() => setAnn(a => ({ ...a, boxes: [] }))}>Clear boxes</button>
               </div>
               <div className="relative mt-3 inline-block max-w-full">
-                <img ref={imgRef} src={`/dataset/images/all/${encodeURIComponent(selected.name)}`} alt={selected.name} className="max-h-[480px] w-auto max-w-full select-none rounded-xl border border-white/10"
+                <img ref={imgRef} src={resolveUrl(`/dataset/images/all/${encodeURIComponent(selected.name)}`)} alt={selected.name} className="max-h-[480px] w-auto max-w-full select-none rounded-xl border border-white/10"
                   onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} draggable={false} />
                 {[...ann.boxes, ...(draft ? [draft] : [])].map((b, i) => (
                   <div key={i} className="absolute border-2 border-sky-400 bg-sky-400/10" style={{ left: b.x_min * scaleX, top: b.y_min * scaleY, width: (b.x_max - b.x_min) * scaleX, height: (b.y_max - b.y_min) * scaleY }}>
@@ -128,7 +177,7 @@ export default function Dataset() {
             <label className="text-sm text-slate-300">Train <input type="number" className="input !w-20" value={trainPct} min={50} max={95} onChange={e => setTrainPct(+e.target.value)} /> %</label>
             <span className="text-sm text-slate-400">Val {100 - trainPct}%</span>
             <button className="btn-primary" onClick={split} disabled={busy}><Split size={15} /> Split &amp; generate data.yaml</button>
-            <a className="btn-ghost" href="/api/dataset/export"><Download size={15} /> Export dataset (.zip)</a>
+            <a className="btn-ghost" href={resolveUrl('/api/dataset/export')}><Download size={15} /> Export dataset (.zip)</a>
           </div>
           {yaml && <pre className="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-emerald-300">{yaml}</pre>}
           {stats?.per_class && <div className="mt-4"><h3 className="text-sm font-semibold">E. Images per class</h3><div className="mt-2 flex flex-wrap gap-2">{Object.entries(stats.per_class).map(([k, v]) => <span key={k} className="chip">{k}: {String(v)} annotation(s)</span>)}</div></div>}

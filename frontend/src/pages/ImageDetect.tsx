@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Download, ImagePlus, Loader2, Upload } from 'lucide-react'
-import { api, DetectResult, toast } from '../lib/api'
+import { api, DetectResult, resolveUrl, toast } from '../lib/api'
 import { DetectionTable } from '../components/ui'
 
 export default function ImageDetect() {
@@ -37,12 +37,12 @@ export default function ImageDetect() {
             <div className="grid gap-3 sm:grid-cols-2">
               <figure><figcaption className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Original</figcaption><img src={preview} alt="Original upload" className="w-full rounded-xl border border-white/10" /></figure>
               <figure><figcaption className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Annotated — YOLOv8 output</figcaption>
-                {result?.annotated_url ? <img src={result.annotated_url} alt="Annotated detection result" className="w-full rounded-xl border border-white/10" /> : <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl border border-white/10 text-sm text-slate-500">Run detection to see bounding boxes</div>}
+                {result?.annotated_url ? <img src={resolveUrl(result.annotated_url)} alt="Annotated detection result" className="w-full rounded-xl border border-white/10" /> : <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl border border-white/10 text-sm text-slate-500">Run detection to see bounding boxes</div>}
               </figure>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button className="btn-primary" onClick={run} disabled={busy || !file}>{busy ? <><Loader2 size={15} className="animate-spin" /> Detecting…</> : <><Upload size={15} /> Run detection</>}</button>
-              {result?.annotated_url && <a className="btn-ghost" href={result.annotated_url} download><Download size={15} /> Download annotated image</a>}
+              {result?.annotated_url && <a className="btn-ghost" href={resolveUrl(result.annotated_url)} download><Download size={15} /> Download annotated image</a>}
             </div>
           </div>
         )}

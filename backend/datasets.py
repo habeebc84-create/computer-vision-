@@ -1,0 +1,172 @@
+"""Curated built-in datasets (one-click download + import).
+
+Only official Ultralytics sample datasets are listed, with URLs verified
+live (HTTP 200) before wiring them in. Each zip contains real COCO images
+and real YOLO txt labels — nothing is fabricated or generated here.
+Licence: COCO 2017, CC BY 4.0 (https://cocodataset.org/#termsofuse).
+"""
+import json, shutil, threading, urllib.request, zipfile
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent.parent
+DL_DIR = BASE / "downloads"
+DL_DIR.mkdir(parents=True, exist_ok=True)
+
+# Standard COCO 80 class names (0-79), as used by yolov8n.pt and by the
+# label files inside the COCO sample zips.
+COCO80 = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+          "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+          "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
+          "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+          "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis",
+          "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+          "skateboard", "surfboard", "tennis racket", "bottle", "wine glass",
+          "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+          "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza",
+          "donut", "cake", "chair", "couch", "potted plant", "bed",
+          "dining table", "toilet", "tv", "laptop", "mouse", "remote",
+          "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+          "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+          "hair drier", "toothbrush"]
+
+CATALOG = [
+    {"id": "coco128",
+     "name": "COCO128",
+     "description": "128 images from COCO train 2017 with real YOLO labels across the 80 COCO classes. Recommended for real training — big enough to learn from, small enough to train quickly on CPU.",
+     "images": 128, "classes": 80, "size_mb": 6.7,
+     "url": "https://ultralytics.com/assets/coco128.zip",
+     "license": "COCO 2017, CC BY 4.0"},
+    {"id": "coco8",
+     "name": "COCO8",
+     "description": "Just 8 images (4 train / 4 val) from COCO train 2017. A tiny smoke test — use it to check the whole download → split → train pipeline works before training on COCO128.",
+     "images": 8, "classes": 80, "size_mb": 0.4,
+     "url": "https://ultralytics.com/assets/coco8.zip",
+     "license": "COCO 2017, CC BY 4.0"},
+]
+
+_lock = threading.Lock()
+_state = {}  # id -> {status, progress, imported_images, imported_labels, error}
+
+def _marker_path(ds_id):
+    return DL_DIR / f"{ds_id}.imported.json"
+
+def _load_state(ds_id):
+    with _lock:
+        s = _state.get(ds_id)
+    if s:
+        return dict(s)
+    m = _marker_path(ds_id)
+    if m.exists():
+        try:
+            d = json.loads(m.read_text())
+            return {"status": "imported", "progress": 100,
+                    "imported_images": d.get("images", 0),
+                    "imported_labels": d.get("labels", 0), "error": None}
+        except Exception:
+            pass
+    return {"status": "not-downloaded", "progress": 0,
+            "imported_images": 0, "imported_labels": 0, "error": None}
+
+def _set_state(ds_id, **kw):
+    with _lock:
+        s = _state.setdefault(ds_id, {"status": "not-downloaded", "progress": 0,
+                                      "imported_images": 0, "imported_labels": 0,
+                                      "error": None})
+        s.update(kw)
+
+def catalog():
+    out = []
+    for d in CATALOG:
+        item = dict(d)
+        item.update(_load_state(d["id"]))
+        out.append(item)
+    return out
+
+def status(ds_id):
+    d = next((c for c in CATALOG if c["id"] == ds_id), None)
+    if not d:
+        raise KeyError(ds_id)
+    item = dict(d)
+    item.update(_load_state(ds_id))
+    return item
+
+def start_download(ds_id, force=False):
+    d = next((c for c in CATALOG if c["id"] == ds_id), None)
+    if not d:
+        raise KeyError(ds_id)
+    cur = _load_state(ds_id)
+    if cur["status"] == "downloading":
+        return status(ds_id)
+    if cur["status"] == "imported" and not force:
+        return status(ds_id)
+    _set_state(ds_id, status="downloading", progress=0, error=None)
+    t = threading.Thread(target=_download_and_import, args=(d,), daemon=True)
+    t.start()
+    return status(ds_id)
+
+def _download_and_import(d):
+    ds_id, url = d["id"], d["url"]
+    zip_path = DL_DIR / f"{ds_id}.zip"
+    tmp_dir = DL_DIR / f"{ds_id}_extract"
+    try:
+        # --- download (follows redirects; streams so big files don't blow RAM)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            with open(zip_path, "wb") as f:
+                while True:
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    if total:
+                        _set_state(ds_id, progress=round(done / total * 70, 1))
+        if not zipfile.is_zipfile(zip_path):
+            raise ValueError("Downloaded file is not a valid zip archive.")
+        # --- extract to a temp dir
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(tmp_dir)
+        _set_state(ds_id, progress=75)
+        # --- import: find every image, pair it with its YOLO txt label
+        from dataset_manager import IMG_ALL, LBL_ALL, ensure_dirs, set_classes
+        ensure_dirs()
+        label_by_stem = {}
+        for p in tmp_dir.rglob("*.txt"):
+            label_by_stem.setdefault(p.stem, p)
+        images = [p for p in tmp_dir.rglob("*")
+                  if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+        if not images:
+            raise ValueError("Zip contained no images.")
+        n_img = n_lbl = 0
+        for img in sorted(images):
+            dest = IMG_ALL / img.name
+            shutil.copy2(img, dest)
+            n_img += 1
+            lab = label_by_stem.get(img.stem)
+            if lab is not None:
+                shutil.copy2(lab, LBL_ALL / (img.stem + ".txt"))
+                n_lbl += 1
+        # The labels use COCO class ids 0-79 — set the project classes to match.
+        set_classes(COCO80)
+        _marker_path(ds_id).write_text(json.dumps(
+            {"images": n_img, "labels": n_lbl, "source": url}))
+        _set_state(ds_id, status="imported", progress=100,
+                   imported_images=n_img, imported_labels=n_lbl, error=None)
+    except Exception as e:
+        _set_state(ds_id, status="failed", error=str(e))
+        # clean up partial files so a retry starts clean
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
+    finally:
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
