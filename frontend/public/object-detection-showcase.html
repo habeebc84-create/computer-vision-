@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A computer vision capstone about custom object detection with YOLOv8, LabelImg, PyTorch and OpenCV.">
+  <meta name="color-scheme" content="dark light">
+  <title>Real-Time Object Detection Using YOLOv8 and Transfer Learning</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d131d; --panel: #151e2b; --panel-2: #1b2738; --text: #f3f6fb;
+      --muted: #b3c0d0; --line: #364558; --accent: #c9f487; --accent-ink: #132007;
+      --max: 72rem; --radius: 1.15rem;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f5f7ef; --panel: #ffffff; --panel-2: #eaf0e4; --text: #18251c;
+      --muted: #465647; --line: #bccaba; --accent: #265b36; --accent-ink: #ffffff;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme]) {
+        color-scheme: light;
+        --bg: #f5f7ef; --panel: #ffffff; --panel-2: #eaf0e4; --text: #18251c;
+        --muted: #465647; --line: #bccaba; --accent: #265b36; --accent-ink: #ffffff;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    html { scroll-behavior: smooth; scroll-padding-top: 5.5rem; }
+    body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.6; }
+    a { color: var(--accent); text-underline-offset: .22em; }
+    button, summary { font: inherit; }
+    button { color: inherit; }
+    :focus-visible { outline: .18rem solid var(--accent); outline-offset: .25rem; }
+    .wrap { width: min(calc(100% - 2.5rem), var(--max)); margin-inline: auto; }
+    .skip {
+      position: fixed; z-index: 10; top: .65rem; left: .65rem;
+      background: var(--accent); color: var(--accent-ink); padding: .5rem 1rem;
+      border-radius: .5rem; transform: translateY(-180%);
+    }
+    .skip:focus { transform: none; }
+    .topbar { position: sticky; z-index: 5; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); }
+    .topbar-inner { min-height: 4.35rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .brand { display: flex; align-items: center; gap: .7rem; font-weight: 800; color: var(--text); text-decoration: none; line-height: 1.15; }
+    .brand-icon { width: 1.7rem; height: 1.7rem; border: .13rem solid var(--accent); border-radius: .35rem; display: grid; place-items: center; flex: none; }
+    .brand-icon::before { content: ""; width: .45rem; height: .45rem; border: .1rem solid var(--accent); border-radius: 50%; }
+    .nav-actions, .desktop-links { display: flex; align-items: center; gap: .55rem; }
+    .desktop-links a { padding: .5rem .7rem; color: var(--muted); text-decoration: none; font-size: .9rem; }
+    .desktop-links a:hover, .menu a:hover { color: var(--text); background: var(--panel-2); border-radius: .5rem; }
+    .control, .button {
+      min-height: 2.65rem; display: inline-flex; align-items: center; justify-content: center; gap: .6rem;
+      padding: .55rem .9rem; border: 1px solid var(--line); border-radius: .6rem;
+      background: var(--panel); color: var(--text); text-decoration: none; font-weight: 700;
+      font-size: .9rem; cursor: pointer; white-space: nowrap;
+    }
+    .control:hover, .button:hover { background: var(--panel-2); }
+    .primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .primary:hover { background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 .2rem var(--line); }
+    .hamburger { width: .95rem; height: .64rem; border-block: .12rem solid currentColor; position: relative; }
+    .hamburger::after { content: ""; position: absolute; top: 50%; width: 100%; left: 0; border-top: .12rem solid currentColor; transform: translateY(-50%); }
+    .section-menu { position: relative; }
+    .section-menu summary { list-style: none; }
+    .section-menu:not([open]) .menu { display: none; }
+    .section-menu summary::-webkit-details-marker { display: none; }
+    .menu {
+      position: absolute; top: calc(100% + .6rem); right: 0; width: min(21rem, calc(100vw - 2.5rem));
+      display: grid; max-height: min(75vh, 31rem); overflow: auto; padding: .5rem;
+      background: var(--panel); border: 1px solid var(--line); border-radius: .7rem;
+      box-shadow: 0 1rem 3rem #0004;
+    }
+    .menu a { color: var(--text); text-decoration: none; padding: .55rem .7rem; line-height: 1.25; font-size: .9rem; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { line-height: 1.03; letter-spacing: -.045em; text-wrap: balance; }
+    h1 { font-size: clamp(2.65rem, 6.2vw, 5rem); max-width: 13ch; }
+    h2 { font-size: clamp(1.9rem, 4.2vw, 3rem); }
+    h3 { font-size: 1.12rem; line-height: 1.28; }
+    p { color: var(--muted); }
+    .hero { position: relative; isolation: isolate; overflow: hidden; border-bottom: 1px solid var(--line); }
+    .hero-inner { min-height: 34rem; display: grid; grid-template-columns: 1.25fr 1fr; align-items: center; gap: clamp(1rem, 4vw, 3.5rem); padding-block: clamp(3rem, 9vw, 7rem); }
+    .hero-copy { position: relative; z-index: 1; }
+    .hero p { margin-top: 1.25rem; max-width: 35rem; font-size: clamp(1rem, 2vw, 1.18rem); }
+    .cta { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.7rem; }
+    .scene {
+      position: relative; min-width: 0; aspect-ratio: 1.12; margin: 0;
+      border: 1px solid var(--line); border-radius: var(--radius);
+      background-color: var(--panel);
+      background-image: linear-gradient(90deg, var(--line) 1px, transparent 1px), linear-gradient(var(--line) 1px, transparent 1px);
+      background-size: 2rem 2rem; overflow: hidden;
+    }
+    .scene::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent, var(--panel) 83%); pointer-events: none; }
+    .scene::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(transparent 43%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 57%);
+      animation: sweep 8s linear infinite;
+    }
+    @keyframes sweep { from { transform: translateY(-60%); } to { transform: translateY(60%); } }
+    .box {
+      --mark: var(--accent); --on-mark: var(--accent-ink);
+      position: absolute; border: .13rem solid var(--mark); border-radius: .24rem;
+      background: color-mix(in srgb, var(--mark) 8%, transparent);
+      animation: drift 6s ease-in-out infinite alternate;
+    }
+    .box b {
+      position: absolute; bottom: 100%; left: -.13rem; border-radius: .28rem .28rem 0 0;
+      padding: .14rem .42rem; color: var(--on-mark); background: var(--mark);
+      font: 700 clamp(.55rem, 1.4vw, .78rem)/1.5 ui-monospace, monospace; white-space: nowrap;
+    }
+    .box-person { top: 26%; left: 15%; width: 26%; height: 55%; }
+    .box-bag { top: 58%; left: 44%; width: 17%; height: 24%; animation-delay: -2s; }
+    .box-car { top: 31%; right: 8%; width: 39%; height: 20%; animation-delay: -4s; }
+    @keyframes drift { to { transform: translate(.34rem, -.48rem); } }
+    .scene-caption { position: absolute; bottom: .52rem; right: .65rem; color: var(--muted); background: var(--panel); border-radius: .2rem; padding: .05rem .25rem; font: .68rem/1.3 ui-monospace, monospace; }
+    main > section:not(.hero), .team-section { padding-block: clamp(2.7rem, 6vw, 5rem); border-bottom: 1px solid var(--line); }
+    .section-head { margin-bottom: 1.5rem; max-width: 47rem; }
+    .section-head p { margin-top: .8rem; }
+    .grid { display: grid; gap: 1rem; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card { min-width: 0; padding: clamp(1.1rem, 3vw, 1.5rem); border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+    .card p { margin-top: .55rem; }
+    .card, .button, .control { transition: transform .22s ease, border-color .22s ease, background-color .22s ease, box-shadow .22s ease; }
+    @media (hover: hover) { .card:hover { border-color: var(--accent); transform: translateY(-.18rem); } }
+    .comparison { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+    table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    th, td { width: 50%; text-align: left; padding: .85rem clamp(.7rem, 3vw, 1.3rem); vertical-align: top; overflow-wrap: anywhere; }
+    th { background: var(--panel-2); color: var(--text); }
+    td { border-top: 1px solid var(--line); color: var(--muted); }
+    th + th, td + td { border-left: 1px solid var(--line); }
+    .flow { padding: 0; margin: 0; list-style: none; gap: 2rem; }
+    .flow li { position: relative; }
+    .flow li:not(:last-child)::after {
+      content: "→"; position: absolute; top: 50%; left: calc(100% + .48rem); transform: translateY(-50%);
+      color: var(--accent); font: 800 1.3rem/1 ui-monospace, monospace;
+    }
+    .flow small, .standard-code { display: block; margin-bottom: .45rem; color: var(--accent); font: 700 .85rem/1.4 ui-monospace, monospace; }
+    code { color: var(--accent); background: var(--panel-2); padding: .08em .27em; border-radius: .3rem; }
+    .demo-slot { margin: 0; padding: .7rem; }
+    .demo-frame {
+      display: grid; place-items: center; text-align: center; aspect-ratio: 16 / 10; width: 100%;
+      padding: .65rem; border: 1px dashed var(--line); border-radius: .65rem; background: var(--panel-2);
+      color: var(--muted); font: .84rem/1.4 ui-monospace, monospace;
+      overflow: hidden;
+    }
+    .demo-frame img, .demo-frame video { width: 100%; height: 100%; object-fit: contain; }
+    figcaption:not(.scene-caption) { padding: .65rem .2rem .1rem; font-weight: 700; }
+    .metric strong { display: block; margin-block: .2rem; color: var(--accent); font-size: clamp(2.5rem, 6vw, 3.7rem); line-height: 1; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
+    .result-list { margin: 1.1rem 0 0; padding-left: 1.25rem; }
+    .result-list li + li, .references li + li { margin-top: .55rem; }
+    .result-list li::marker, .references li::marker { color: var(--accent); }
+    .result-caption { margin-top: 1.3rem; }
+    .timeline { padding: 0 0 0 1.35rem; margin: 0; list-style: none; border-left: 1px solid var(--line); }
+    .timeline li { position: relative; padding: .8rem 0; }
+    .timeline li::before {
+      content: ""; position: absolute; top: 1.08rem; left: -1.7rem; width: .64rem; height: .64rem;
+      border: .11rem solid var(--accent); border-radius: 50%; background: var(--bg);
+    }
+    .references { padding-left: 1.6rem; margin: 0; }
+    .references li { padding-left: .28rem; overflow-wrap: anywhere; }
+    .references li::marker { content: "[" counter(list-item) "] "; font-family: ui-monospace, monospace; }
+    .team-section { background: var(--panel); }
+    .team-section .card { background: var(--bg); }
+    .footer-bar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1.25rem; }
+    .placeholder-link[aria-disabled="true"] { cursor: default; color: var(--muted); }
+    .reveal-pending { opacity: 0; transform: translateY(.65rem); }
+    .reveal-ready { transition: opacity .5s ease, transform .5s ease; }
+    @media (max-width: 60rem) { .desktop-links { display: none; } .four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 45rem) {
+      .hero-inner { grid-template-columns: 1fr; min-height: 0; }
+      .hero h1 { max-width: 18ch; }
+      .scene { aspect-ratio: 1.7; }
+      .two, .three { grid-template-columns: 1fr; }
+      .flow li:not(:last-child)::after { content: "↓"; top: calc(100% + .4rem); left: 50%; transform: translateX(-50%); }
+    }
+    @media (max-width: 25rem) {
+      .wrap { width: calc(100% - 1.6rem); }
+      .four { grid-template-columns: 1fr; }
+      .brand { gap: .5rem; }
+      .brand-text { max-width: 6rem; font-size: .88rem; }
+      .section-menu summary { width: 2.65rem; }
+      .menu-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      .control { padding-inline: .55rem; font-size: .82rem; }
+      .menu { width: min(19rem, calc(100vw - 1.6rem)); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+      .reveal-pending { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="#hero"><span class="brand-icon" aria-hidden="true"></span><span class="brand-text">Object Detection</span></a>
+      <div class="nav-actions">
+        <nav class="desktop-links" aria-label="Quick navigation">
+          <a href="#architecture">Architecture</a>
+          <a href="#demo">Live Demo</a>
+          <a href="#results">Results</a>
+          <a href="#team">Team</a>
+        </nav>
+        <button class="control" id="theme-toggle" type="button" aria-pressed="false" hidden>Light theme</button>
+        <details class="section-menu" id="section-menu">
+          <summary class="control"><span class="hamburger" aria-hidden="true"></span><span class="menu-label">Menu</span></summary>
+          <nav class="menu" aria-label="All sections">
+            <a href="#hero">Hero</a>
+            <a href="#abstract">Abstract</a>
+            <a href="#introduction">Introduction and Problem Statement</a>
+            <a href="#comparison">Existing vs Proposed System</a>
+            <a href="#architecture">Architecture and Modules</a>
+            <a href="#demo">Live Demo</a>
+            <a href="#results">Results</a>
+            <a href="#standards">IEEE Standards</a>
+            <a href="#future">Future Scope</a>
+            <a href="#conclusion">Conclusion</a>
+            <a href="#references">References</a>
+            <a href="#team">Team and Footer</a>
+          </nav>
+        </details>
+      </div>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <section class="hero" id="hero" aria-labelledby="hero-title">
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <h1 id="hero-title">Real-Time Object Detection Using YOLOv8 and Transfer Learning</h1>
+          <p>Detect custom objects live from webcam and video using YOLOv8 and transfer learning</p>
+          <div class="cta">
+            <a class="button primary" href="#demo">View Demo</a>
+            <a class="button" href="#architecture">Architecture</a>
+          </div>
+        </div>
+        <figure class="scene" aria-hidden="true">
+          <div class="box box-person"><b>person 0.92</b></div>
+          <div class="box box-bag"><b>backpack 0.87</b></div>
+          <div class="box box-car"><b>car 0.96</b></div>
+          <figcaption class="scene-caption">Illustrative detections</figcaption>
+        </figure>
+      </div>
+    </section>
+    <section id="abstract" aria-labelledby="abstract-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="abstract-title">Abstract</h2>
+          <p>This project fine-tunes YOLOv8 on a custom annotated dataset to detect objects in webcam and video frames. The workflow combines LabelImg annotation, PyTorch training, and OpenCV inference to display each detection with a bounding box, a class label, and a confidence score.</p>
+        </div>
+        <div class="grid four">
+          <article class="card"><h3>YOLOv8 Transfer Learning</h3><p>Fine-tune pretrained weights on custom classes.</p></article>
+          <article class="card"><h3>LabelImg Annotation</h3><p>Draw bounding boxes and export class labels.</p></article>
+          <article class="card"><h3>PyTorch Training</h3><p>Train over multiple epochs and evaluate the best checkpoint.</p></article>
+          <article class="card"><h3>OpenCV Inference</h3><p>Read video frames and draw model predictions.</p></article>
+        </div>
+      </div>
+    </section>
+    <section id="introduction" aria-labelledby="introduction-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="introduction-title">Introduction and Problem Statement</h2></div>
+        <div class="grid two">
+          <article class="card"><h3>Introduction</h3><p>Classical methods use hand-crafted features that can struggle when lighting, viewpoint, scale, or background changes. Generic detectors cover fixed class lists, so a custom object may have no matching label.</p></article>
+          <article class="card"><h3>Problem Statement</h3><p>Training from scratch is costly because it requires a large labeled dataset, more computation, and longer training. The goal is to detect custom objects from webcam and video above 20 FPS by fine-tuning a pretrained YOLOv8 model.</p></article>
+        </div>
+      </div>
+    </section>
+    <section id="comparison" aria-labelledby="comparison-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="comparison-title">Existing vs Proposed System</h2></div>
+        <div class="comparison">
+          <table aria-labelledby="comparison-title">
+            <thead><tr><th scope="col">Existing</th><th scope="col">Proposed</th></tr></thead>
+            <tbody>
+              <tr><td>Hand-crafted features</td><td>YOLOv8 fine-tuned via transfer learning</td></tr>
+              <tr><td>Heavy computation</td><td>OpenCV real-time display</td></tr>
+              <tr><td>Needs large datasets</td><td>Custom annotated dataset</td></tr>
+              <tr><td>Generic models can’t detect custom classes</td><td>Custom-class detection with a target above 20 FPS</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <section id="architecture" aria-labelledby="architecture-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="architecture-title">Architecture and Modules</h2></div>
+        <ol class="grid three flow" aria-label="Architecture workflow">
+          <li class="card"><small>Module 1</small><h3>Dataset Preparation</h3><p>Annotate images with LabelImg.</p></li>
+          <li class="card"><small>Module 2</small><h3>Model Training</h3><p>Train with PyTorch, fine-tune for multiple epochs, save best weights as <code>best.pt</code>, check mAP, tune the confidence threshold.</p></li>
+          <li class="card"><small>Module 3</small><h3>Inference &amp; Visualization</h3><p>OpenCV captures webcam or video frames and draws bounding boxes, class labels and confidence scores.</p></li>
+        </ol>
+      </div>
+    </section>
+    <section id="demo" aria-labelledby="demo-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="demo-title">Live Demo</h2></div>
+        <div class="grid three">
+          <!-- Replace each placeholder span with an <img alt="..."> or a <video controls playsinline> when your media is ready. -->
+          <figure class="card demo-slot"><div class="demo-frame"><span>Screenshot or video placeholder</span></div><figcaption>Webcam detection</figcaption></figure>
+          <figure class="card demo-slot"><div class="demo-frame"><span>Screenshot or video placeholder</span></div><figcaption>Video detection</figcaption></figure>
+          <figure class="card demo-slot"><div class="demo-frame"><span>Screenshot or video placeholder</span></div><figcaption>Custom object detection</figcaption></figure>
+        </div>
+      </div>
+    </section>
+    <section id="results" aria-labelledby="results-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="results-title">Results</h2></div>
+        <div class="grid three">
+          <article class="card metric"><h3>mAP</h3><strong><span class="counter" data-value="80.3" data-decimals="1" aria-hidden="true">80.3</span><span aria-hidden="true">%</span><span class="sr-only">80.3 percent</span></strong><p>mAP@0.50 on a one-epoch COCO8 smoke test.</p></article>
+          <article class="card metric"><h3>FPS</h3><strong><span aria-hidden="true">&gt;</span><span class="counter" data-value="20" data-decimals="0" aria-hidden="true">20</span><span class="sr-only">Above 20</span></strong><p>Project target. Actual speed depends on hardware and input.</p></article>
+          <article class="card metric"><h3>Confidence threshold</h3><strong><span class="counter" data-value="0.25" data-decimals="2" aria-hidden="true">0.25</span><span class="sr-only">0.25</span></strong><p>Default setting used to filter low-confidence boxes.</p></article>
+        </div>
+        <p class="result-caption">The demo verifies the detection workflow. Training time and false detections are improvement goals.</p>
+        <ul class="result-list">
+          <li>Real-time detection from webcam and video</li>
+          <li>Labels and confidence on every frame</li>
+          <li>Reduced training time</li>
+          <li>Fewer false detections</li>
+        </ul>
+      </div>
+    </section>
+    <section id="standards" aria-labelledby="standards-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="standards-title">IEEE Standards</h2></div>
+        <div class="grid four">
+          <article class="card"><span class="standard-code">IEEE 730</span><h3>Software Quality Assurance</h3></article>
+          <article class="card"><span class="standard-code">IEEE 1012</span><h3>Verification and Validation</h3></article>
+          <article class="card"><span class="standard-code">ISO/IEC/IEEE 29119</span><h3>Software Testing</h3></article>
+          <article class="card"><span class="standard-code">ISO/IEC/IEEE 12207</span><h3>Software Life Cycle</h3></article>
+        </div>
+      </div>
+    </section>
+    <section id="future" aria-labelledby="future-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="future-title">Future Scope</h2></div>
+        <ol class="timeline">
+          <li>Edge and mobile deployment</li>
+          <li>Larger or newer YOLO models</li>
+          <li>More object classes</li>
+          <li>Object tracking across frames</li>
+          <li>Larger and more diverse datasets</li>
+        </ol>
+      </div>
+    </section>
+    <section id="conclusion" aria-labelledby="conclusion-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="conclusion-title">Conclusion</h2>
+          <p>Fine-tuning YOLOv8 connects custom image annotation to webcam and video detection in a single workflow. The resulting model uses OpenCV to display boxes, class labels, and confidence scores, with the confidence threshold adjustable for the target setting.</p>
+        </div>
+      </div>
+    </section>
+    <section id="references" aria-labelledby="references-title">
+      <div class="wrap">
+        <div class="section-head"><h2 id="references-title">References</h2></div>
+        <ol class="references">
+          <li>J. Redmon et al., “You Only Look Once: Unified, Real-Time Object Detection,” CVPR, pp. 779–788, 2016.</li>
+          <li>G. Jocher, A. Chaurasia, J. Qiu, “Ultralytics YOLOv8,” GitHub, 2023.</li>
+          <li>A. Paszke et al., “PyTorch: An Imperative Style, High-Performance Deep Learning Library,” NeurIPS 32, pp. 8024–8035, 2019.</li>
+          <li>G. Bradski, “The OpenCV Library,” Dr. Dobb’s Journal, 2019.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+  <footer class="team-section" id="team" aria-labelledby="team-title">
+    <div class="wrap">
+      <div class="section-head"><h2 id="team-title">Team</h2></div>
+      <div class="grid three">
+        <article class="card"><h3>D Nandu Priya</h3><p>192311173</p></article>
+        <article class="card"><h3>J Shankar</h3><p>192312202</p></article>
+        <article class="card"><h3>Cheppali Habeeb</h3><p>192525144</p></article>
+      </div>
+      <div class="footer-bar">
+        <p>Guided by Dr. Ashok Kumar S, Professor, SIMATS Engineering</p>
+        <!-- Replace href="#" with the repository URL and remove aria-disabled="true". -->
+        <a class="button placeholder-link" href="#" aria-disabled="true">GitHub link placeholder</a>
+      </div>
+    </div>
+  </footer>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const preference = matchMedia("(prefers-color-scheme: light)");
+      const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+      const toggle = document.getElementById("theme-toggle");
+      const menu = document.getElementById("section-menu");
+      const themeKey = "object-detection-showcase-theme";
+
+      function setTheme(theme) {
+        root.dataset.theme = theme;
+        toggle.setAttribute("aria-pressed", String(theme === "light"));
+      }
+
+      let savedTheme;
+      try { savedTheme = localStorage.getItem(themeKey); } catch {}
+      setTheme(savedTheme === "light" || savedTheme === "dark" ? savedTheme : preference.matches ? "light" : "dark");
+      toggle.hidden = false;
+      toggle.addEventListener("click", () => {
+        const theme = root.dataset.theme === "light" ? "dark" : "light";
+        setTheme(theme);
+        try { localStorage.setItem(themeKey, theme); } catch {}
+      });
+      menu.addEventListener("click", event => {
+        const link = event.target.closest("a");
+        const section = link && document.getElementById(link.hash.slice(1));
+        if (!section) return;
+        menu.open = false;
+        section.tabIndex = -1;
+        section.focus({ preventScroll: true });
+      });
+      document.addEventListener("keydown", event => {
+        if (event.key !== "Escape" || !menu.open) return;
+        menu.open = false;
+        menu.querySelector("summary").focus();
+      });
+      document.addEventListener("pointerdown", event => {
+        if (menu.open && !menu.contains(event.target)) menu.open = false;
+      });
+      document.querySelector(".placeholder-link[aria-disabled='true']")?.addEventListener("click", event => event.preventDefault());
+
+      if (reducedMotion.matches || !("IntersectionObserver" in window)) return;
+      const reveal = new IntersectionObserver((entries, observer) => {
+        entries.forEach(({ isIntersecting, target }) => {
+          if (!isIntersecting) return;
+          target.classList.remove("reveal-pending");
+          observer.unobserve(target);
+        });
+      }, { threshold: .08 });
+      document.querySelectorAll("main > section:not(.hero) .wrap, .team-section .wrap").forEach(section => {
+        if (section.getBoundingClientRect().top > innerHeight) {
+          section.classList.add("reveal-ready", "reveal-pending");
+          reveal.observe(section);
+        }
+      });
+
+      const metrics = new IntersectionObserver((entries, observer) => {
+        entries.forEach(({ isIntersecting, target }) => {
+          if (!isIntersecting) return;
+          observer.unobserve(target);
+          const value = Number(target.dataset.value);
+          const places = Number(target.dataset.decimals);
+          let start;
+          function frame(time) {
+            start ??= time;
+            const progress = Math.min((time - start) / 900, 1);
+            target.textContent = (value * (1 - (1 - progress) ** 3)).toFixed(places);
+            if (progress < 1) requestAnimationFrame(frame);
+          }
+          requestAnimationFrame(frame);
+        });
+      }, { threshold: .65 });
+      document.querySelectorAll(".counter").forEach(counter => metrics.observe(counter));
+    })();
+  </script>
+</body>
+</html>
