@@ -136,12 +136,12 @@ export default function Dataset() {
           {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {[['Total images', stats?.total_images ?? 0], ['Annotations', stats?.total_annotations ?? 0], ['Classes', stats?.num_classes ?? 0], ['Train images', stats?.train_images ?? 0], ['Val images', stats?.val_images ?? 0]].map(([l, v]) => (
           <div key={l as string} className="card"><p className="text-xs uppercase tracking-wider text-slate-400">{l}</p><p className="mt-1 text-2xl font-bold">{v}</p></div>
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         <div className="card">
           <h2 className="font-semibold">A. Image collection</h2>
           <label className="mt-3 flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-white/15 px-4 py-6 text-center text-sm hover:border-sky-500/50">
@@ -167,7 +167,7 @@ export default function Dataset() {
           <div className="mt-2 flex flex-wrap gap-2">{classes.map((c, i) => <span key={i} className="chip">{i}: {c}</span>)}{!classes.length && <span className="text-sm text-slate-400">No classes defined yet.</span>}</div>
           <div className="mt-2 flex gap-2"><input className="input" placeholder="New class name, e.g. helmet" value={newClass} onChange={e => setNewClass(e.target.value)} onKeyDown={e => e.key === 'Enter' && addClass()} /><button className="btn-primary" onClick={addClass}><Plus size={15} /> Add</button></div>
         </div>
-        <div className="card lg:col-span-2">
+        <div className="card xl:col-span-2">
           <h2 className="font-semibold">B. Annotation — LabelImg-compatible (YOLO txt)</h2>
           {!selected ? <p className="mt-3 text-sm text-slate-400">Select an image on the left, then drag on it to draw a bounding box. Boxes are saved as YOLO text labels (class, centre-x, centre-y, width, height — normalised).</p> : (
             <>

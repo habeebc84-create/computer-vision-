@@ -200,8 +200,8 @@ export default function Live() {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <div className="card lg:col-span-2">
+    <div className="grid gap-4 xl:grid-cols-3">
+      <div className="card xl:col-span-2">
         <div className="flex flex-wrap items-center gap-2">
           <select className="input max-w-xs" value={deviceId} disabled={running || busy || enablingNames} onChange={e => setDeviceId(e.target.value)} aria-label="Camera device">
             <option value="">Default camera</option>
@@ -243,9 +243,9 @@ export default function Live() {
         <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-black aspect-video">
           <video ref={videoRef} playsInline muted className="h-full w-full object-contain" />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full object-contain" />
-          {!running && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400"><CameraOff size={36} /><p className="text-sm">Webcam is off — press “Start webcam” to begin real-time detection.</p><p className="text-xs text-slate-500">Your camera stays in this browser; frames go to the backend when it is connected, otherwise they are detected right here in the browser.</p></div>}
+          {!running && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400"><CameraOff size={36} /><p className="px-4 text-center text-sm">Webcam is off — press “Start webcam” to begin real-time detection.</p></div>}
         </div>
-        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Frames are captured at ~6 fps. No fake stream is ever shown.</p>
+        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Camera frames are sampled up to 6 times per second.</p>
       </div>
       <div className="space-y-4">
         <div className="card">

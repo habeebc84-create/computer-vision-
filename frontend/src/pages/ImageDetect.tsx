@@ -117,8 +117,8 @@ export default function ImageDetect() {
   }
   return (
     <>
-    <div className="grid gap-4 lg:grid-cols-3">
-      <div className="card lg:col-span-2">
+    <div className="grid gap-4 xl:grid-cols-3">
+      <div className="card xl:col-span-2">
         <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Detection mode">
           <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} disabled={busy} onClick={() => setMode('coco')}>COCO classes (80)</button>
           <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} disabled={busy} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
