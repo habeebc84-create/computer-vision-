@@ -138,13 +138,13 @@ def split_dataset(train_pct=80):
     ensure_dirs()
     imgs = list_images()
     if not imgs: raise ValueError("No images uploaded yet — upload images first.")
+    if len(imgs) < 2: raise ValueError("A train/validation split needs at least two images.")
     classes = get_classes()
     if not classes: raise ValueError("No classes defined — add at least one class first.")
     missing = [i["name"] for i in imgs if i["annotations"] == 0]
     rng = random.Random(42); pool = imgs[:]; rng.shuffle(pool)
-    n_train = max(1, round(len(pool) * train_pct / 100)) if len(pool) > 1 else 1
+    n_train = max(1, min(len(pool) - 1, round(len(pool) * train_pct / 100)))
     train, val = pool[:n_train], pool[n_train:]
-    if not val and len(pool) > 1: val, train = [train[-1]], train[:-1]
     for sub in ("train", "val"):
         for p in (DS/"images"/sub).glob("*"): p.unlink()
         for p in (DS/"labels"/sub).glob("*"): p.unlink()

@@ -20,6 +20,7 @@ RUN pip install --upgrade pip && \
       --index-url https://download.pytorch.org/whl/cpu \
       --extra-index-url https://pypi.org/simple
 COPY backend/ ./backend/
+COPY models/package-yolov8n.pt ./models/
 COPY run.py ./
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 RUN mkdir -p models dataset/images/all dataset/labels/all dataset/images/train \

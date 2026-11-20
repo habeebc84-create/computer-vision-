@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { BarChart3, Camera, Database, History, Home, Image as ImageIcon, Layers, ScanEye, Settings as SettingsIcon, X, Menu, Cpu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { BarChart3, Camera, Database, History, Home, Image as ImageIcon, Layers, ScanEye, Settings as SettingsIcon, X, Menu, Cpu, PanelLeftClose, PanelLeftOpen, Video } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, ModelStatus } from '../lib/api'
 
-export type PageId = 'dashboard' | 'live' | 'image' | 'dataset' | 'training' | 'inference' | 'history' | 'analytics' | 'settings'
+export type PageId = 'dashboard' | 'live' | 'image' | 'video' | 'dataset' | 'training' | 'inference' | 'history' | 'analytics' | 'settings'
 export const NAV: { id: PageId; label: string; icon: LucideIcon; group: string }[] = [
   { id: 'dashboard', label: 'Overview', icon: Home, group: 'Detect' },
   { id: 'live', label: 'Live Detection', icon: Camera, group: 'Detect' },
   { id: 'image', label: 'Image Detection', icon: ImageIcon, group: 'Detect' },
+  { id: 'video', label: 'Video Detection', icon: Video, group: 'Detect' },
   { id: 'dataset', label: 'Dataset', icon: Database, group: 'Modules' },
   { id: 'training', label: 'Model Training', icon: Layers, group: 'Modules' },
   { id: 'inference', label: 'Inference', icon: ScanEye, group: 'Modules' },

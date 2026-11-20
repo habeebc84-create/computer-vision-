@@ -7,6 +7,15 @@ from a webcam and in uploaded images — using real YOLOv8
 inference (Ultralytics, PyTorch, OpenCV). No fake detections, no simulated
 results: every bounding box, label and confidence score comes from the model.
 
+| Image mode | Objects it can find | Where it runs |
+| --- | --- | --- |
+| Everyday objects (365) | YOLOE with the Objects365 vocabulary, including categories such as glasses and sneakers | Browser, with weights bundled in the frontend |
+| Packages (trained) | Parcels, using a YOLOv8n detector fine-tuned on factory package photos | Browser, with weights bundled in the frontend |
+| COCO / selected backend model | The original 80 COCO categories or the labels learned by your selected checkpoint | Python backend, with a browser fallback for COCO |
+| Search by name | Object names you enter as prompts for YOLO-World | Python backend or Grounding DINO in the browser |
+
+Everyday objects is the default on a fresh install. The first frontend build or development launch downloads and verifies the 38 MB Objects365 weights. For a category outside its vocabulary, try Search by name. Small, occluded or unfamiliar objects can still be missed. See the [everyday model details](frontend/public/models/objects365.md) and [package training and held-out results](models/package-model.md).
+
 ## Modules (exactly as specified)
 
 1. **Module 1 — Dataset Preparation** — upload images, annotate with a
@@ -18,8 +27,8 @@ results: every bounding box, label and confidence score comes from the model.
    mAP50-95 from `results.csv`; `best.pt` saved, downloadable and loadable.
 3. **Module 3 — Inference & Visualization** — live webcam (browser camera,
    frames sent to the backend) and image detection with annotated output.
-   Video detection was removed from the website; the backend still processes
-   videos when run locally (see API table).
+   Uploaded videos can be sampled in the browser using the 365-category detector,
+   or processed frame by frame on the backend and downloaded as annotated MP4.
 
 Plus: Overview Dashboard, Detection History (SQLite), Analytics & Reports
 (CSV + PDF), Settings (model, conf/IoU thresholds, image size, device).
@@ -211,13 +220,22 @@ Limits — stated honestly (COCO path):
   smooth video, until run on a faster machine.
 - **Training and history still need the backend.** They are not
   faked in the browser: those pages keep saying the backend is required.
-  In-browser results are not saved to history. Video detection was removed
   from the website entirely.
 - **Tiny edge objects can differ from the backend.** Verified on the
   Ultralytics bus photo: the browser found the bus (84%) and all 4 people
   (88/88/87/43%), matching the backend's 6 detections except the tiny
   stop sign at the image edge (backend 26%, browser max score 4%) — a
   marginal object whose score depends on resize details.
+
+## Objects365 training data
+
+The browser detector already includes the Objects365 vocabulary. For custom
+training, download data from the [Objects365 download page](https://www.objects365.org/download.html).
+In **Dataset → Objects365 and custom datasets**, import a ZIP containing one
+COCO-format annotation JSON and its corresponding images. Use subsets of up
+to 100 MB per archive and keep image basenames unique within each ZIP. Boxes
+are converted to YOLO labels, and category names are added without changing
+existing label IDs. Then split the dataset before training.
 
 ## Built-in datasets (one-click download)
 

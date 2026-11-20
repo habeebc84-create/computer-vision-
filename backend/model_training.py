@@ -1,7 +1,8 @@
 """YOLOv8 training in a background thread with real Ultralytics callbacks.
 Progress comes from results.csv / trainer state — never fabricated.
 Stop: a callback at epoch end raises, aborting training cleanly."""
-import csv, threading, time
+import csv, shutil, threading, time
+from uuid import uuid4
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
@@ -23,34 +24,20 @@ class TrainingJob:
         line = f"[{time.strftime('%H:%M:%S')}] {msg}"
         self.logs.append(line); self.logs = self.logs[-500:]
 
-    def _read_results_csv(self):
-        run_dir = BASE / "runs" / "detect" / "train"
-        # Ultralytics may create train, train2, ... — take the newest
-        parent = BASE / "runs" / "detect"
-        cands = sorted(parent.glob("train*"), key=lambda p: p.stat().st_mtime) if parent.exists() else []
-        for d in reversed(cands):
-            csvp = d / "results.csv"
-            if csvp.exists():
-                try:
-                    with open(csvp) as f:
-                        rows = list(csv.DictReader(f))
-                    if rows:
-                        r = rows[-1]
-                        # results.csv epoch is 0-based; clamp to the configured total
-                        self.epoch = min(int(float(r.get("epoch", 0))) + 1, self.total_epochs or 999)
-                        self.metrics = {
-                            "box_loss": float(r.get("train/box_loss", 0)),
-                            "cls_loss": float(r.get("train/cls_loss", 0)),
-                            "val_loss": float(r.get("val/box_loss", 0)),
-                            "precision": float(r.get("metrics/precision(B)", 0)),
-                            "recall": float(r.get("metrics/recall(B)", 0)),
-                            "mAP50": float(r.get("metrics/mAP50(B)", 0)),
-                            "mAP50_95": float(r.get("metrics/mAP50-95(B)", 0)),
-                        }
-                        self.best_path = str(d / "weights" / "best.pt") if (d/"weights"/"best.pt").exists() else self.best_path
-                        return
-                except Exception:
-                    pass
+    def _read_results_csv(self, run_dir):
+        with (run_dir / "results.csv").open() as f:
+            rows = list(csv.DictReader(f, skipinitialspace=True))
+        if rows:
+            row = rows[-1]
+            self.epoch = min(int(float(row["epoch"])), self.total_epochs)
+            self.metrics = {
+                key: float(row[column]) for key, column in (
+                    ("box_loss", "train/box_loss"), ("cls_loss", "train/cls_loss"),
+                    ("val_loss", "val/box_loss"), ("precision", "metrics/precision(B)"),
+                    ("recall", "metrics/recall(B)"), ("mAP50", "metrics/mAP50(B)"),
+                    ("mAP50_95", "metrics/mAP50-95(B)"),
+                )
+            }
 
     def start(self, config):
         if self.status == "running":
@@ -76,27 +63,34 @@ class TrainingJob:
                     "Install the backend dependencies with: pip install -r requirements.txt"
                 ) from None
             cfg = self.config
-            model = YOLO(cfg.get("model", "yolov8n.pt"))
+            weights = cfg.get("model", "yolov8n.pt")
+            local_weights = BASE / "models" / weights
+            model = YOLO(str(local_weights) if local_weights.is_file() else weights)
             job = self
             def _on_epoch_end(trainer):
-                job._read_results_csv()
+                if not (trainer.save_dir / "results.csv").is_file():
+                    return
+                job._read_results_csv(trainer.save_dir)
                 job._log(f"Epoch {job.epoch}/{job.total_epochs} — mAP50 {job.metrics.get('mAP50', 0):.3f}")
                 if job._stop.is_set():
                     raise RuntimeError("Training stopped by user.")
-            model.add_callback("on_train_epoch_end", _on_epoch_end)
+            model.add_callback("on_fit_epoch_end", _on_epoch_end)
             self._log(f"Starting YOLOv8 training: model={cfg.get('model')} epochs={cfg.get('epochs')} imgsz={cfg.get('imgsz')} batch={cfg.get('batch')}")
             model.train(data=str(BASE/"dataset"/"data.yaml"), epochs=int(cfg.get("epochs", 10)),
                         imgsz=int(cfg.get("imgsz", 640)), batch=int(cfg.get("batch", 8)),
                         device=cfg.get("device", "cpu"), project=str(BASE/"runs"/"detect"),
-                        name="train", exist_ok=True, verbose=False)
-            self._read_results_csv()
+                        name=f"train-{uuid4().hex}", verbose=False)
+            run_dir = Path(model.trainer.save_dir)
+            self._read_results_csv(run_dir)
+            best = BASE / "models" / "best.pt"
+            best.parent.mkdir(exist_ok=True)
+            pending = best.with_suffix(".pt.tmp")
+            shutil.copy2(run_dir / "weights" / "best.pt", pending)
+            pending.replace(best)
+            self.best_path = str(best)
             self.status = "completed" if not self._stop.is_set() else "stopped"
             self.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
             self._log("Training finished." + (f" Best weights: {self.best_path}" if self.best_path else ""))
-            if self.best_path:
-                import shutil
-                shutil.copy2(self.best_path, BASE/"models"/"best.pt")
-                self.best_path = str(BASE/"models"/"best.pt")
         except RuntimeError as e:
             if "stopped by user" in str(e):
                 self.status = "stopped"; self._log("Training stopped by user.")
@@ -113,7 +107,6 @@ class TrainingJob:
         return {"status": "stopping"}
 
     def snapshot(self):
-        if self.status == "running": self._read_results_csv()
         best = None
         if self.best_path and Path(self.best_path).exists():
             p = Path(self.best_path)

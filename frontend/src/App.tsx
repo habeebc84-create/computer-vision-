@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Layout, Toasts, PageId } from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Live from './pages/Live'
+import VideoDetect from './pages/VideoDetect'
 import ImageDetect from './pages/ImageDetect'
 import Dataset from './pages/Dataset'
 import Training from './pages/Training'
@@ -18,6 +19,7 @@ export default function App() {
       {page === 'dashboard' && <Dashboard go={setPage} />}
       {page === 'live' && <Live />}
       {page === 'image' && <ImageDetect />}
+      {page === 'video' && <VideoDetect />}
       {page === 'dataset' && <Dataset />}
       {page === 'training' && <Training />}
       {page === 'inference' && <Inference go={setPage} />}

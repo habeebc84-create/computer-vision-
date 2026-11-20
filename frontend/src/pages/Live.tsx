@@ -228,7 +228,7 @@ export default function Live() {
           <div className="mt-3">
             <label className="label">Objects to find (comma-separated, up to 20)</label>
             <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="person, car, dog" aria-label="Object names to detect" />
-            <p className="mt-1 text-xs text-slate-500">Searches for the objects you name. With the backend connected this uses YOLO-World (~25 MB). Without a backend it runs Grounding DINO in your browser instead (~205 MB download once, slower, experimental — each object checked takes several seconds, so live video is snapshots, not smooth video).</p>
+            <p className="mt-1 text-xs text-slate-500">Searches for the objects you name. With the backend connected this uses YOLO-World (first use downloads its weights and text encoder). Without a backend it runs Grounding DINO in your browser instead (~205 MB download once, slower, experimental — each object checked takes several seconds, so live video is snapshots, not smooth video).</p>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Try an object outside the COCO list">
               {['microphone', 'sunglasses', 'headphones', 'traffic cone', 'whiteboard', 'coffee mug'].map(p => (
                 <button key={p} type="button" className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs text-violet-200 hover:bg-violet-500/20" onClick={() => setClassesText(p)} title="Try this non-COCO object">{p}</button>

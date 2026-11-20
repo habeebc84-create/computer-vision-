@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Download, ImagePlus, Loader2, Sparkles, Upload } from 'lucide-react'
-import { api, DetectResult, detectWithFallback, parseDetectionPrompts, resolveUrl, toast } from '../lib/api'
+import { api, isBackendOnline, DetectResult, detectWithFallback, parseDetectionPrompts, resolveUrl, toast } from '../lib/api'
 // NOTE: browserDetection is dynamically imported only when the backend is
 // offline, so the ~600 KB ONNX Runtime bundle stays out of the main chunk.
 import { DetectionTable } from '../components/ui'
 
 import { COCO_NAMES } from '../lib/yoloPost'
+
+type Mode = 'broad' | 'package' | 'coco' | 'world'
 
 const COCO_GROUPS: { title: string; items: string[] }[] = [
   { title: 'People', items: ['person'] },
@@ -56,22 +58,29 @@ export default function ImageDetect() {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState('')
   const [result, setResult] = useState<DetectResult | null>(null)
+  const [scanSmallObjects, setScanSmallObjects] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [mode, setMode] = useState<'coco' | 'world'>('coco')
+  const [chosenMode, setMode] = useState<Mode | null>(null)
+  const [backendModel, setBackendModel] = useState('')
+  const mode = chosenMode ?? (backendModel.includes('world') ? 'world' : backendModel && backendModel !== 'yolov8n.pt' ? 'coco' : 'broad')
+  const customSelected = Boolean(backendModel) && !/^yolov8[nsmlx]\.pt$/.test(backendModel)
   const [classesText, setClassesText] = useState('bus, person, traffic light')
   // Where the last result actually came from — never mislabelled.
   const [source, setSource] = useState<'backend' | 'browser' | null>(null)
   const [modelPct, setModelPct] = useState<number | null>(null)
   const [promptStatus, setPromptStatus] = useState('')
 
-  // If the world model was chosen in Settings, start in Any-object mode.
   useEffect(() => {
-    api.modelStatus().then(m => { if (m?.model_path?.includes('world')) setMode('world') }).catch(() => null)
+    let mounted = true
+    api.modelStatus().then(status => {
+      if (mounted) setBackendModel(status.model_path?.split(/[/\\]/).pop() || '')
+    }).catch(() => null)
+    return () => { mounted = false }
   }, [])
 
   useEffect(() => {
-    if (!file) return
+    if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file)
     setPreview(url)
     return () => URL.revokeObjectURL(url)
@@ -79,6 +88,7 @@ export default function ImageDetect() {
 
   const pick = (f: File | undefined) => {
     if (!f || busy) return
+    setFile(null); setResult(null); setSource(null)
     // Phones often save HEIC/HEIF, which browsers (except Safari) cannot
     // decode — say so plainly instead of the generic format error.
     if (/heic|heif/i.test(f.type) || /\.hei[cf]$/i.test(f.name)) {
@@ -91,24 +101,35 @@ export default function ImageDetect() {
   }
   const run = async () => {
     if (!file) return
-    setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus('')
+    setMode(mode); setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus('')
     try {
       const prompts = mode === 'world' ? parseDetectionPrompts(classesText) : null
       const progress = (loaded: number, total: number) => {
-        if (total > 0) setModelPct(Math.round(loaded / total * 100))
+        if (total > 0) setModelPct(Math.min(100, Math.round(loaded / total * 100)))
       }
-      const { result: r, source } = await detectWithFallback<DetectResult>(
-        () => prompts ? api.openVocabImage(file, prompts) : api.detectImage(file),
-        async () => {
-          if (prompts) {
-            const { detectOpenVocabFileInBrowser } = await import('../lib/browserOpenVocab')
-            return detectOpenVocabFileInBrowser(file, prompts, progress,
-              (done, total, prompt) => setPromptStatus(`Checking “${prompt}” (${done} of ${total})`))
-          }
+      const runDetector = async () => {
+        if (mode === 'broad' || mode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
-          return detectImageFileInBrowser(file, progress)
-        },
-      )
+          return { result: await detectImageFileInBrowser(file, progress, mode, mode === 'broad' && scanSmallObjects), source: 'browser' as const }
+        }
+        if (mode === 'coco' && customSelected) {
+          if (!(await isBackendOnline())) throw new Error(`Start the Python backend to use ${backendModel}.`)
+          return { result: await api.detectImage(file), source: 'backend' as const }
+        }
+        return detectWithFallback<DetectResult>(
+          () => prompts ? api.openVocabImage(file, prompts) : api.detectImage(file),
+          async () => {
+            if (prompts) {
+              const { detectOpenVocabFileInBrowser } = await import('../lib/browserOpenVocab')
+              return detectOpenVocabFileInBrowser(file, prompts, progress,
+                (done, total, prompt) => setPromptStatus(`Checking “${prompt}” (${done} of ${total})`))
+            }
+            const { detectImageFileInBrowser } = await import('../lib/browserDetection')
+            return detectImageFileInBrowser(file, progress)
+          },
+        )
+      }
+      const { result: r, source } = await runDetector()
       setSource(source)
       setResult(r); toast(`Detected ${r.count} object(s) in ${(r.inference_ms).toFixed(0)} ms`)
     }
@@ -119,10 +140,28 @@ export default function ImageDetect() {
     <>
     <div className="grid gap-4 xl:grid-cols-3">
       <div className="card xl:col-span-2">
-        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Detection mode">
-          <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} disabled={busy} onClick={() => setMode('coco')}>COCO classes (80)</button>
-          <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} disabled={busy} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Detection mode">
+          {([
+            ['broad', 'Everyday objects (365)'],
+            ['package', 'Packages (trained)'],
+            ['coco', customSelected ? `Backend model (${backendModel})` : 'COCO classes (80)'],
+            ['world', 'Search by name'],
+          ] as const).map(([id, label]) => (
+            <button key={id} className={mode === id ? 'btn-primary' : 'btn-ghost'} aria-pressed={mode === id}
+              disabled={busy} onClick={() => { setMode(id); setResult(null); setSource(null); setError('') }}>
+              {id === 'world' && <Sparkles size={15} />}{label}
+            </button>
+          ))}
         </div>
+        {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
+        {mode === 'broad' && (
+          <label className="mb-3 flex items-start gap-2 text-sm text-slate-300">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-400" checked={scanSmallObjects}
+              disabled={busy} onChange={event => setScanSmallObjects(event.target.checked)} />
+            <span>Look for small objects <span className="text-slate-400">(slower on large photos)</span></span>
+          </label>
+        )}
+        {mode === 'package' && <p className="my-3 text-sm text-slate-400">Find packages using a detector fine-tuned on labeled package photos.</p>}
         {mode === 'world' && (
           <div className="mt-3">
             <label className="label">Objects to find (comma-separated, up to 20)</label>
@@ -141,13 +180,13 @@ export default function ImageDetect() {
         }} className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-10 text-center hover:border-sky-500/50">
           <ImagePlus size={28} className="text-sky-400" />
           <span className="mt-2 font-semibold">Drop an image here, or click to browse</span>
-          <span className="text-xs text-slate-400">JPG / PNG / WebP / GIF / BMP / AVIF · up to 20 MB · processed by the real YOLOv8 model</span>
-          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="hidden" disabled={busy} onChange={e => pick(e.target.files?.[0])} />
+          <span className="text-xs text-slate-400">JPG / PNG / WebP / GIF / BMP / AVIF · up to 20 MB</span>
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="hidden" disabled={busy} onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
         </label>
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
-        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
+        {modelPct !== null && <p role="status" className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}%</p>}
         {busy && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
-        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser. Real {mode === 'world' ? 'Grounding DINO open-vocabulary' : 'YOLOv8'} inference on your device; browser results are not saved to history.</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-200">Detection ran in your browser. This result is not saved to history.</p>}
         {preview && (
           <div className="mt-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -175,6 +214,9 @@ export default function ImageDetect() {
           {result ? (
             <div className="mt-3 space-y-2 text-sm">
               <p className="flex justify-between"><span className="text-slate-400">Total objects</span><b>{result.count}</b></p>
+              {result.count === 0 && mode === 'broad' && !scanSmallObjects && (
+                <p className="text-slate-300">No objects met the confidence threshold. For small or distant objects, try enabling “Look for small objects”.</p>
+              )}
               {(result as any).prompts && <p className="flex justify-between"><span className="text-slate-400">Looking for</span><b className="text-right">{(result as any).prompts.join(', ')}</b></p>}
               <p className="flex justify-between"><span className="text-slate-400">Unique classes</span><b>{result.unique_classes.join(', ') || '—'}</b></p>
               <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{(result.avg_confidence * 100).toFixed(1)}%</b></p>

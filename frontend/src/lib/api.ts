@@ -4,7 +4,7 @@ export interface ModelStatus { loaded: boolean; model_path: string; device: stri
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
 export interface BuiltinDataset { id: string; name: string; description: string; images: number; classes: number; size_mb: number; url: string; license: string; status: string; imported_images?: number; imported_labels?: number; progress?: number; error?: string | null }
-export interface AvailableModel { id: string; path: string; kind: 'coco' | 'world'; name: string; classes: number | null; description: string; size_mb: number; downloaded: boolean; loaded?: boolean }
+export interface AvailableModel { id: string; path: string; kind: 'coco' | 'world' | 'trained'; name: string; classes: number | null; description: string; size_mb: number; downloaded: boolean; loaded?: boolean }
 
 /**
  * API base URL. When the frontend is served by the Python backend (python run.py)
@@ -54,8 +54,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message) }
+
+  get backendUnavailable() { return this.status === 0 || this.status === 404 || this.status >= 500 }
 }
 
 export async function detectWithFallback<T>(backend: () => Promise<T>, browser: () => Promise<T>) {
@@ -64,7 +66,7 @@ export async function detectWithFallback<T>(backend: () => Promise<T>, browser: 
     try {
       return { result: await backend(), source: 'backend' as const }
     } catch (error) {
-      if (!(error instanceof ApiError) || (error.status !== 0 && error.status !== 404 && error.status < 500)) throw error
+      if (!(error instanceof ApiError) || !error.backendUnavailable) throw error
       backendError = error
     }
   }
@@ -149,6 +151,11 @@ export const api = {
   deleteHistory: (id: number) => req(`/api/history/${id}`, { method: 'DELETE' }),
   dsStats: () => req<any>('/api/dataset/stats'),
   dsImages: () => req<any[]>('/api/dataset/images'),
+  dsImportCoco: async (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req<{ saved: string[]; skipped: string[]; classes: number }>('/api/dataset/import-coco', { method: 'POST', body: fd })
+  },
   dsUpload: async (files: FileList | File[]) => {
     const fd = new FormData(); Array.from(files).forEach(f => fd.append('files', f))
     return req<{ saved: string[]; skipped: string[]; errors?: { file: string; message: string }[] }>('/api/dataset/upload', { method: 'POST', body: fd })
