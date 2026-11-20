@@ -1,5 +1,5 @@
 export interface Detection { class_id: number; class_name: string; confidence: number; bbox: number[] }
-export interface DetectResult { detections: Detection[]; count: number; unique_classes: string[]; avg_confidence: number; inference_ms: number; fps: number; record_id?: number; annotated_url?: string; original_name?: string }
+export interface DetectResult { detections: Detection[]; count: number; unique_classes: string[]; avg_confidence: number; inference_ms: number; fps: number; record_id?: number; history_error?: string; annotated_url?: string; original_name?: string }
 export interface ModelStatus { loaded: boolean; model_path: string; device: string; classes: number; class_names: string[]; loaded_at: string | null; error: string | null; conf: number; iou: number; imgsz: number }
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
@@ -151,7 +151,7 @@ export const api = {
   dsImages: () => req<any[]>('/api/dataset/images'),
   dsUpload: async (files: FileList | File[]) => {
     const fd = new FormData(); Array.from(files).forEach(f => fd.append('files', f))
-    return req<any>('/api/dataset/upload', { method: 'POST', body: fd })
+    return req<{ saved: string[]; skipped: string[]; errors?: { file: string; message: string }[] }>('/api/dataset/upload', { method: 'POST', body: fd })
   },
   dsDelete: (name: string) => req(`/api/dataset/images/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   dsClasses: () => req<{ classes: string[] }>('/api/dataset/classes'),

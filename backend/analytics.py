@@ -1,14 +1,22 @@
 """SQLite detection-history store + analytics computed only from real records."""
 import json, sqlite3
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "database" / "detections.db"
 
+@contextmanager
 def conn():
     DB.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row; return c
+    connection = sqlite3.connect(DB)
+    connection.row_factory = sqlite3.Row
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 def init_db():
     with conn() as c:
