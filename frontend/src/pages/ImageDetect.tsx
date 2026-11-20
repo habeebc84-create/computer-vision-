@@ -181,7 +181,7 @@ export default function ImageDetect() {
               <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result.inference_ms.toFixed(0)} ms</b></p>
               <p className="flex justify-between"><span className="text-slate-400">FPS (equivalent)</span><b>{result.fps.toFixed(1)}</b></p>
               <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{(result as any).engine || (source === 'browser' ? 'In-browser (ONNX)' : 'Backend (PyTorch)')}</b></p>
-              <p className="flex justify-between"><span className="text-slate-400">History record</span><b>{result.record_id ? `#${result.record_id}` : '— not saved (in-browser)'}</b></p>
+              <p className="flex justify-between"><span className="text-slate-400">History record</span><b>{result.record_id ? `#${result.record_id}` : result.history_error || '— not saved (in-browser)'}</b></p>
             </div>
           ) : <p className="mt-3 text-sm text-slate-400">Upload an image and run detection — results and statistics appear here.</p>}
         </div>
