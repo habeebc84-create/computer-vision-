@@ -32,33 +32,63 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     r = await fetch(url, init)
   } catch {
     // Network failure (backend down, wrong VITE_API_URL, CORS) — never show a stack trace.
-    throw new Error(BACKEND_OFFLINE_NET)
+    throw new ApiError(BACKEND_OFFLINE_NET, 0)
   }
   const text = await r.text()
   if (!r.ok) {
-    // Real backend errors are JSON with `detail` — keep those verbatim.
-    const ct = r.headers.get('content-type') || ''
-    if (ct.includes('application/json')) {
+    let message: string | undefined
+    if (r.headers.get('content-type')?.includes('application/json')) {
       try {
         const data = JSON.parse(text)
-        if (data.detail || data.message) throw new Error(String(data.detail || data.message))
-      } catch (e) {
-        // Not JSON after all — fall through to the friendly errors below.
-        void e
-      }
+        const detail = data.detail || data.message
+        if (typeof detail === 'string') message = detail
+      } catch { /* Proxies can return invalid JSON. */ }
     }
-    // A non-JSON error body (e.g. Vercel's 404 HTML page when no backend exists)
-    // must never be surfaced as the error message.
-    if (r.status === 404 && path.startsWith('/api')) throw new Error(BACKEND_OFFLINE_404)
-    throw new Error(`Request failed (${r.status})`)
+    if (r.status === 404 && !message) message = BACKEND_OFFLINE_404
+    throw new ApiError(message || `Request failed (${r.status})`, r.status)
   }
-  if (!text) return {} as T
   try {
     return JSON.parse(text) as T
   } catch {
-    throw new Error(`Request failed (${r.status})`)
+    throw new ApiError('Backend returned an invalid response.', 0)
   }
 }
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
+export async function detectWithFallback<T>(backend: () => Promise<T>, browser: () => Promise<T>) {
+  let backendError: ApiError | undefined
+  if (await isBackendOnline()) {
+    try {
+      return { result: await backend(), source: 'backend' as const }
+    } catch (error) {
+      if (!(error instanceof ApiError) || (error.status !== 0 && error.status !== 404 && error.status < 500)) throw error
+      backendError = error
+    }
+  }
+  try {
+    return { result: await browser(), source: 'browser' as const }
+  } catch (error) {
+    if (backendError) throw new Error(`${backendError.message} Browser detection also failed: ${String(error)}`)
+    throw error
+  }
+}
+
+export function parseDetectionPrompts(text: string): string[] {
+  const prompts = new Map<string, string>()
+  for (const part of text.split(',')) {
+    const name = part.trim()
+    if (!name || prompts.has(name.toLowerCase())) continue
+    if ([...name].length > 40) throw new Error('Object names must be 40 characters or fewer.')
+    prompts.set(name.toLowerCase(), name)
+  }
+  if (!prompts.size) throw new Error('Type at least one object name, such as microphone or headphones.')
+  if (prompts.size > 20) throw new Error('At most 20 object names at a time.')
+  return [...prompts.values()]
+}
+
 // Cached backend reachability: health is cheap, but Live checks it every
 // frame tick — cache the answer for 10 s so the check costs nothing.
 let _healthCache: { at: number; online: boolean } | null = null
@@ -66,8 +96,12 @@ export async function isBackendOnline(): Promise<boolean> {
   const now = Date.now()
   if (_healthCache && now - _healthCache.at < 10_000) return _healthCache.online
   let online = false
-  try { await api.health(); online = true } catch { online = false }
-  _healthCache = { at: now, online }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 4000)
+  try { online = (await api.health({ signal: controller.signal })).status === 'ok' }
+  catch { online = false }
+  finally { clearTimeout(timeout) }
+  _healthCache = { at: Date.now(), online }
   return online
 }
 export function backendOnlineCached(): boolean | null {
@@ -75,7 +109,7 @@ export function backendOnlineCached(): boolean | null {
 }
 
 export const api = {
-  health: () => req<{ status: string; model_loaded: boolean; device: string }>('/api/health'),
+  health: (init?: RequestInit) => req<{ status: string; model_loaded: boolean; device: string }>('/api/health', init),
   modelStatus: () => req<ModelStatus>('/api/model/status'),
   loadModel: (path: string) => req<ModelStatus>('/api/model/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) }),
   getSettings: () => req<any>('/api/settings'),
@@ -97,8 +131,9 @@ export const api = {
     const fd = new FormData(); fd.append('frame', blob, 'frame.jpg')
     return req<DetectResult>('/api/detect/frame', { method: 'POST', body: fd })
   },
-  saveFrame: async (blob: Blob) => {
+  saveFrame: async (blob: Blob, prompts?: string[]) => {
     const fd = new FormData(); fd.append('frame', blob, 'frame.jpg')
+    if (prompts) fd.append('classes', JSON.stringify(prompts))
     return req<DetectResult>('/api/detect/frame/save', { method: 'POST', body: fd })
   },
   startVideo: async (file: File) => {
