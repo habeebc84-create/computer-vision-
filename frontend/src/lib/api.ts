@@ -147,7 +147,7 @@ export const api = {
   classDist: () => req<{ name: string; count: number }[]>('/api/analytics/class-distribution'),
   activity: () => req<{ date: string; sessions: number; objects: number }[]>('/api/analytics/activity'),
   confidence: () => req<{ range: string; count: number }[]>('/api/analytics/confidence'),
-  history: (q = '') => req<HistoryRecord[]>(`/api/history${q}`),
+  history: (q = '', init?: RequestInit) => req<HistoryRecord[]>(`/api/history${q}`, init),
   deleteHistory: (id: number) => req(`/api/history/${id}`, { method: 'DELETE' }),
   dsStats: () => req<any>('/api/dataset/stats'),
   dsImages: () => req<any[]>('/api/dataset/images'),

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Download, ImagePlus, Loader2, Sparkles, Upload } from 'lucide-react'
 import { api, isBackendOnline, DetectResult, detectWithFallback, parseDetectionPrompts, resolveUrl, toast } from '../lib/api'
-// NOTE: browserDetection is dynamically imported only when the backend is
-// offline, so the ~600 KB ONNX Runtime bundle stays out of the main chunk.
+import { saveBrowserHistory } from '../lib/browserHistory'
+import type { BrowserDetectResult } from '../lib/browserDetection'
 import { DetectionTable } from '../components/ui'
 
 import { COCO_NAMES } from '../lib/yoloPost'
 
 type Mode = 'broad' | 'package' | 'coco' | 'world'
+type ImageResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine'>> & { prompts?: string[] }
 
 const COCO_GROUPS: { title: string; items: string[] }[] = [
   { title: 'People', items: ['person'] },
@@ -57,7 +58,8 @@ function WhatCanItRecognise() {
 export default function ImageDetect() {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState('')
-  const [result, setResult] = useState<DetectResult | null>(null)
+  const [result, setResult] = useState<ImageResult | null>(null)
+  const [historyStatus, setHistoryStatus] = useState('')
   const [scanSmallObjects, setScanSmallObjects] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -101,13 +103,13 @@ export default function ImageDetect() {
   }
   const run = async () => {
     if (!file) return
-    setMode(mode); setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus('')
+    setMode(mode); setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus(''); setHistoryStatus('')
     try {
       const prompts = mode === 'world' ? parseDetectionPrompts(classesText) : null
       const progress = (loaded: number, total: number) => {
         if (total > 0) setModelPct(Math.min(100, Math.round(loaded / total * 100)))
       }
-      const runDetector = async () => {
+      const runDetector = async (): Promise<{ result: ImageResult; source: 'browser' | 'backend' }> => {
         if (mode === 'broad' || mode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
           return { result: await detectImageFileInBrowser(file, progress, mode, mode === 'broad' && scanSmallObjects), source: 'browser' as const }
@@ -116,7 +118,7 @@ export default function ImageDetect() {
           if (!(await isBackendOnline())) throw new Error(`Start the Python backend to use ${backendModel}.`)
           return { result: await api.detectImage(file), source: 'backend' as const }
         }
-        return detectWithFallback<DetectResult>(
+        return detectWithFallback<ImageResult>(
           () => prompts ? api.openVocabImage(file, prompts) : api.detectImage(file),
           async () => {
             if (prompts) {
@@ -132,10 +134,30 @@ export default function ImageDetect() {
       const { result: r, source } = await runDetector()
       setSource(source)
       setResult(r); toast(`Detected ${r.count} object(s) in ${(r.inference_ms).toFixed(0)} ms`)
+      if (source === 'browser') {
+        setHistoryStatus('Saving…')
+        try {
+          await saveBrowserHistory({
+            inputType: mode === 'world' ? 'open-vocab' : 'image',
+            count: r.count,
+            classes: r.unique_classes,
+            avgConfidence: r.avg_confidence,
+            inferenceMs: r.inference_ms,
+            fps: r.fps,
+            model: r.engine || 'In-browser (ONNX)',
+            name: file.name,
+            previewDataUrl: r.annotatedDataUrl,
+          })
+          setHistoryStatus('Saved in this browser')
+        } catch {
+          setHistoryStatus('Could not save in this browser')
+        }
+      }
     }
     catch (e: any) { setError(e.message); toast(e.message, 'err') }
     finally { setBusy(false); setModelPct(null); setPromptStatus('') }
   }
+  const annotatedSrc = result?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
   return (
     <>
     <div className="grid gap-4 xl:grid-cols-3">
@@ -186,24 +208,18 @@ export default function ImageDetect() {
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p role="status" className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}%</p>}
         {busy && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
-        {source === 'browser' && <p className="mt-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-200">Detection ran in your browser. This result is not saved to history.</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-200">Detection ran in your browser.</p>}
         {preview && (
           <div className="mt-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <figure><figcaption className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Original</figcaption><img src={preview} alt="Original upload" className="w-full rounded-xl border border-white/10" /></figure>
               <figure><figcaption className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Annotated result</figcaption>
-                {(() => {
-                  const src = (result as any)?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
-                  return src ? <img src={src} alt="Annotated detection result" className="w-full rounded-xl border border-white/10" /> : <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl border border-white/10 text-sm text-slate-500">Run detection to see bounding boxes</div>
-                })()}
+                {annotatedSrc ? <img src={annotatedSrc} alt="Annotated detection result" className="w-full rounded-xl border border-white/10" /> : <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl border border-white/10 text-sm text-slate-500">Run detection to see bounding boxes</div>}
               </figure>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button className="btn-primary" onClick={run} disabled={busy || !file}>{busy ? <><Loader2 size={15} className="animate-spin" /> Detecting…</> : <><Upload size={15} /> Run detection</>}</button>
-              {(() => {
-                const src = (result as any)?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
-                return src ? <a className="btn-ghost" href={src} download="annotated.jpg"><Download size={15} /> Download annotated image</a> : null
-              })()}
+              {annotatedSrc && <a className="btn-ghost" href={annotatedSrc} download="annotated.jpg"><Download size={15} /> Download annotated image</a>}
             </div>
           </div>
         )}
@@ -217,13 +233,13 @@ export default function ImageDetect() {
               {result.count === 0 && mode === 'broad' && !scanSmallObjects && (
                 <p className="text-slate-300">No objects met the confidence threshold. For small or distant objects, try enabling “Look for small objects”.</p>
               )}
-              {(result as any).prompts && <p className="flex justify-between"><span className="text-slate-400">Looking for</span><b className="text-right">{(result as any).prompts.join(', ')}</b></p>}
+              {result.prompts && <p className="flex justify-between"><span className="text-slate-400">Looking for</span><b className="text-right">{result.prompts.join(', ')}</b></p>}
               <p className="flex justify-between"><span className="text-slate-400">Unique classes</span><b>{result.unique_classes.join(', ') || '—'}</b></p>
               <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{(result.avg_confidence * 100).toFixed(1)}%</b></p>
               <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result.inference_ms.toFixed(0)} ms</b></p>
               <p className="flex justify-between"><span className="text-slate-400">FPS (equivalent)</span><b>{result.fps.toFixed(1)}</b></p>
-              <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{(result as any).engine || (source === 'browser' ? 'In-browser (ONNX)' : 'Backend (PyTorch)')}</b></p>
-              <p className="flex justify-between"><span className="text-slate-400">History record</span><b>{result.record_id ? `#${result.record_id}` : result.history_error || '— not saved (in-browser)'}</b></p>
+              <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{result.engine || (source === 'browser' ? 'In-browser (ONNX)' : 'Backend (PyTorch)')}</b></p>
+              <p className="flex justify-between" role="status"><span className="text-slate-400">History record</span><b>{source === 'browser' ? historyStatus : result.record_id ? `#${result.record_id}` : result.history_error || '—'}</b></p>
             </div>
           ) : <p className="mt-3 text-sm text-slate-400">Upload an image and run detection — results and statistics appear here.</p>}
         </div>

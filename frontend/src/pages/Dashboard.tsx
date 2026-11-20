@@ -58,7 +58,7 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
       <section aria-labelledby="metrics-heading">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 id="metrics-heading" className="text-lg font-semibold tracking-tight">Detection metrics</h2>
-          {!loading && !s && <span className="text-xs text-slate-400">Detection history unavailable</span>}
+          {!loading && !s && <span className="text-xs text-slate-400">Backend metrics unavailable</span>}
         </div>
         {loading ? <div className="card text-sm text-slate-400" role="status">Loading detection metrics…</div> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <StatCard label="Total detections" value={s ? String(s.total_detections) : '—'} icon={<Target size={20} />} />
@@ -102,7 +102,7 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
             <thead><tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-400"><th className="py-2">Date / time</th><th className="py-2">Type</th><th className="py-2">Classes</th><th className="py-2">Objects</th><th className="py-2">Avg conf</th><th className="py-2">FPS</th></tr></thead>
             <tbody>{s.recent.map(r => <tr key={r.id} className="border-b border-white/5"><td className="py-2">{r.created_at}</td><td className="py-2 capitalize">{r.input_type}</td><td className="py-2">{r.classes.join(', ') || '—'}</td><td className="py-2">{r.object_count}</td><td className="py-2">{(r.avg_conf * 100).toFixed(0)}%</td><td className="py-2">{r.fps?.toFixed(1)}</td></tr>)}</tbody>
           </table></div>
-        ) : <p className="mt-3 text-sm text-slate-400">No saved detections yet.</p>}
+        ) : <p className="mt-3 text-sm text-slate-400">No backend detections to show. Open Detection History for results saved in this browser.</p>}
       </div>
     </div>
   )

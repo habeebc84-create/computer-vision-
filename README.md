@@ -30,7 +30,7 @@ Everyday objects is the default on a fresh install. The first frontend build or 
    Uploaded videos can be sampled in the browser using the 365-category detector,
    or processed frame by frame on the backend and downloaded as annotated MP4.
 
-Plus: Overview Dashboard, Detection History (SQLite), Analytics & Reports
+Plus: Overview Dashboard, Detection History (browser storage and SQLite), Analytics & Reports
 (CSV + PDF), Settings (model, conf/IoU thresholds, image size, device).
 
 ## Architecture
@@ -88,27 +88,15 @@ Open **http://localhost:8000**. The first inference downloads `yolov8n.pt`
 (~6 MB, COCO 80 classes) from Ultralytics into `models/` — internet is
 required once for that download. The `.pt` file is git-ignored on purpose.
 
-## Why detection doesn't work on Vercel
+## Browser-only deployment on Vercel
 
-**Short version: Vercel hosts only the static frontend. There is no Python
-backend there, so every `/api/*` call fails — but image and live detection
-now fall back to running YOLOv8 in the browser (see "In-browser detection"
-below), so detection still works on the Vercel site. Training and
-history still need a backend.**
+Image detection, live webcam detection, and sampled video detection run in the
+browser on the Vercel site. Detection History shows image runs, completed video
+sessions, and saved webcam snapshots from this browser. Records saved in this
+browser stay in its site storage. Connect a backend for training, dataset
+management, full-frame video export, and server reports.
 
-This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
-backend. Vercel is a static/serverless host — it can serve the dashboard UI,
-but it cannot run the backend: PyTorch + Ultralytics are hundreds of MB (far
-over Vercel's serverless function size limit), training and video processing
-run for minutes (over the request timeout), and the backend keeps a model in
-memory and writes to SQLite/disk, which serverless functions don't do.
-
-What you see on a Vercel deploy: the dashboard loads, the header shows an
-amber **"Backend offline"** banner, and every detection/training/history
-action fails with a clear message instead of a wall of HTML — the frontend
-never pretends the backend is there.
-
-**To make a Vercel frontend actually detect objects, point it at a backend:**
+To connect the Vercel frontend to a backend:
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
@@ -218,9 +206,8 @@ Limits — stated honestly (COCO path):
   inference in Node; in-browser wasm is slower (~2 fps effective for live
   video on a typical laptop). Photos are fine; live video is snapshots, not
   smooth video, until run on a faster machine.
-- **Training and history still need the backend.** They are not
-  faked in the browser: those pages keep saying the backend is required.
-  from the website entirely.
+- **Training needs the backend.** Browser detections and saved snapshots are
+  available in Detection History on the device that ran them.
 - **Tiny edge objects can differ from the backend.** Verified on the
   Ultralytics bus photo: the browser found the bus (84%) and all 4 people
   (88/88/87/43%), matching the backend's 6 detections except the tiny
@@ -335,8 +322,10 @@ Notes and limits (honest):
   can be downloaded or loaded as the active model.
 - **Settings** — model path, confidence, IoU, image size, device. All are
   applied to real inference calls.
-- **History / Analytics** — search, filter, view, download and delete
-  records; charts from recorded data; CSV/PDF report export.
+- **Detection History** — search, filter, view, download, and delete saved
+  image runs, video sessions, and live snapshots. The page includes browser
+  records and any available backend records. Clearing the site's data removes
+  browser records. Analytics and CSV/PDF reports use backend records.
 
 ## LabelImg notes
 

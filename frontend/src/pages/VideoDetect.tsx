@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, FileVideo, Loader2, Upload } from 'lucide-react'
 import { api, resolveUrl } from '../lib/api'
+import { saveBrowserHistory } from '../lib/browserHistory'
 import { DetectionTable } from '../components/ui'
 import type { VideoSample } from '../lib/browserVideo'
 
@@ -9,6 +10,7 @@ export default function VideoDetect() {
   const [job, setJob] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [historyStatus, setHistoryStatus] = useState('')
   const [mode, setMode] = useState<'browser' | 'backend'>('browser')
   const [samples, setSamples] = useState<VideoSample[]>([])
   const [selected, setSelected] = useState(0)
@@ -22,7 +24,7 @@ export default function VideoDetect() {
   }, [])
 
   const clearResults = () => {
-    setError(''); setJob(null); setSamples([]); setSelected(0); setSampleTotal(0)
+    setError(''); setJob(null); setSamples([]); setSelected(0); setSampleTotal(0); setHistoryStatus('')
   }
   const pick = (next?: File) => {
     if (!next || busy) return
@@ -48,10 +50,35 @@ export default function VideoDetect() {
     try {
       if (mode === 'browser') {
         const { sampleVideo } = await import('../lib/browserVideo')
+        const results: VideoSample['result'][] = []
+        const startedAt = performance.now()
         await sampleVideo(file, controller.signal, (sample, _done, total) => {
+          results.push(sample.result)
           setSampleTotal(total)
           setSamples(current => [...current, sample])
         })
+        if (controller.signal.aborted) return
+        const elapsedMs = Math.max(1, performance.now() - startedAt)
+        const detections = results.flatMap(result => result.detections)
+        const confidence = detections.reduce((sum, detection) => sum + detection.confidence, 0)
+        const preview = results.find(result => result.count > 0) || results[0]
+        setHistoryStatus('Saving to Detection History…')
+        try {
+          await saveBrowserHistory({
+            inputType: 'video',
+            count: detections.length,
+            classes: [...new Set(detections.map(detection => detection.class_name))].sort(),
+            avgConfidence: detections.length ? confidence / detections.length : 0,
+            inferenceMs: results.reduce((sum, result) => sum + result.inference_ms, 0),
+            fps: results.length * 1000 / elapsedMs,
+            model: preview?.engine || 'YOLOE · Objects365',
+            name: file.name,
+            previewDataUrl: preview?.annotatedDataUrl,
+          })
+          if (!controller.signal.aborted) setHistoryStatus('Saved to Detection History in this browser.')
+        } catch {
+          if (!controller.signal.aborted) setHistoryStatus('Could not save this result to Detection History.')
+        }
         finish()
         return
       }
@@ -92,6 +119,7 @@ export default function VideoDetect() {
         {sampleTotal > 0 && (
           <div className="mt-4 space-y-3">
             <p role="status" className="text-sm text-slate-300">{samples.length} / {sampleTotal} sampled frames analyzed</p>
+            {historyStatus && <p role="status" className="text-sm text-slate-300">{historyStatus}</p>}
             <div className="flex flex-wrap gap-2" aria-label="Sampled frames">
               {samples.map((sample, index) => (
                 <button type="button" key={sample.time} aria-pressed={selected === index}

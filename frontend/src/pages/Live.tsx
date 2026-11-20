@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { CameraOff, Download, Play, Sparkles, Square, Video } from 'lucide-react'
 import { api, DetectResult, detectWithFallback, parseDetectionPrompts, toast } from '../lib/api'
-// NOTE: browserDetection is dynamically imported only when the backend is
-// offline, so the ~600 KB ONNX Runtime bundle stays out of the main chunk.
+import { saveBrowserHistory } from '../lib/browserHistory'
+import type { BrowserDetectResult } from '../lib/browserDetection'
 import { DetectionTable } from '../components/ui'
+
+type FrameResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine'>>
 
 export default function Live() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -14,7 +16,7 @@ export default function Live() {
   const mountedRef = useRef(false)
   const requestRef = useRef(0)
   const [running, setRunning] = useState(false)
-  const [result, setResult] = useState<DetectResult | null>(null)
+  const [result, setResult] = useState<FrameResult | null>(null)
   const [fps, setFps] = useState(0)
   const [error, setError] = useState('')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -23,6 +25,7 @@ export default function Live() {
   const [labelsHidden, setLabelsHidden] = useState(false)
   const [enablingNames, setEnablingNames] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [savingSnapshot, setSavingSnapshot] = useState(false)
   const [mode, setMode] = useState<'coco' | 'world'>('coco')
   const [classesText, setClassesText] = useState('person, car, dog')
   const [source, setSource] = useState<'backend' | 'browser' | null>(null)
@@ -96,7 +99,7 @@ export default function Live() {
       const progress = (loaded: number, total: number) => {
         if (total > 0 && current()) setModelPct(Math.round(loaded / total * 100))
       }
-      const { result: res, source } = await detectWithFallback<DetectResult>(
+      const { result: res, source } = await detectWithFallback<FrameResult>(
         async () => {
           const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.85))
           if (!blob) throw new Error('Could not encode the camera frame.')
@@ -187,16 +190,39 @@ export default function Live() {
     setRunning(false); setResult(null); setFps(0); setSource(null); setModelPct(null); setPromptStatus('')
   }
   const saveSnapshot = async () => {
-    const v = videoRef.current
-    if (source !== 'backend' || !v?.videoWidth || !v.videoHeight) return
-    const text = classesText
-    const openVocabulary = mode === 'world'
-    const off = document.createElement('canvas'); off.width = v.videoWidth; off.height = v.videoHeight
-    off.getContext('2d')!.drawImage(v, 0, 0)
-    const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.9))
-    if (!blob) return
-    try { const r = await api.saveFrame(blob, openVocabulary ? parseDetectionPrompts(text) : undefined); toast(`Snapshot saved — ${r.count} object(s), record #${r.record_id}`) }
-    catch (e: any) { toast(e.message, 'err') }
+    if (!running || !source || !result || savingSnapshot) return
+    setSavingSnapshot(true)
+    try {
+      if (source === 'browser') {
+        await saveBrowserHistory({
+          inputType: 'live',
+          count: result.count,
+          classes: result.unique_classes,
+          avgConfidence: result.avg_confidence,
+          inferenceMs: result.inference_ms,
+          fps: result.fps,
+          model: result.engine || 'In-browser (ONNX)',
+          previewDataUrl: result.annotatedDataUrl,
+        })
+        toast(`Snapshot saved in this browser · ${result.count} object(s)`)
+        return
+      }
+      const video = videoRef.current
+      if (!video?.videoWidth || !video.videoHeight) throw new Error('No camera frame is ready.')
+      const frame = document.createElement('canvas')
+      frame.width = video.videoWidth
+      frame.height = video.videoHeight
+      frame.getContext('2d')!.drawImage(video, 0, 0)
+      const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.9))
+      if (!blob) throw new Error('Could not encode the camera frame.')
+      const saved = await api.saveFrame(blob, mode === 'world' ? parseDetectionPrompts(classesText) : undefined)
+      if (!saved.record_id) throw new Error(saved.history_error || 'The backend did not return a saved record.')
+      toast(`Snapshot saved · ${saved.count} object(s), record #${saved.record_id}`)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Could not save the snapshot.', 'err')
+    } finally {
+      setSavingSnapshot(false)
+    }
   }
 
   return (
@@ -210,7 +236,7 @@ export default function Live() {
           {!running
             ? <button className="btn-primary" onClick={() => openCamera(false)} disabled={busy || enablingNames}><Play size={15} /> {busy ? 'Starting…' : 'Start webcam'}</button>
             : <button className="btn-danger" onClick={stop}><Square size={15} /> Stop webcam</button>}
-          <button className="btn-ghost" onClick={saveSnapshot} disabled={!running || source !== 'backend'}><Download size={15} /> Save snapshot</button>
+          <button className="btn-ghost" onClick={saveSnapshot} disabled={!running || !result || savingSnapshot}><Download size={15} /> {savingSnapshot ? 'Saving…' : 'Save snapshot'}</button>
           <span className={`ml-auto chip ${running ? '' : '!bg-white/5 !text-slate-400 !border-white/10'}`}>{running ? '● LIVE' : '○ OFFLINE'}</span>
         </div>
         {labelsHidden && !running && (
@@ -239,7 +265,7 @@ export default function Live() {
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
         {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
-        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser. Real {mode === 'world' ? 'Grounding DINO open-vocabulary' : 'YOLOv8'} inference on your device; browser results are not saved to history.</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Detection runs in your browser. Use Save snapshot to keep the latest result in Detection History.</p>}
         <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-black aspect-video">
           <video ref={videoRef} playsInline muted className="h-full w-full object-contain" />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full object-contain" />
@@ -256,7 +282,7 @@ export default function Live() {
             <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{result ? (result.avg_confidence * 100).toFixed(1) + '%' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result ? result.inference_ms.toFixed(0) + ' ms' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Measured FPS</span><b>{fps ? fps.toFixed(1) : '—'}</b></p>
-            <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{(result as any)?.engine || (source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—')}</b></p>
+            <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{result?.engine || (source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—')}</b></p>
           </div>
         </div>
         <div className="card">
