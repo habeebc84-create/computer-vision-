@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, CameraOff, Download, Play, Sparkles, Square, Video } from 'lucide-react'
-import { api, DetectResult, isBackendOnline, toast } from '../lib/api'
+import { CameraOff, Download, Play, Sparkles, Square, Video } from 'lucide-react'
+import { api, DetectResult, detectWithFallback, parseDetectionPrompts, toast } from '../lib/api'
 // NOTE: browserDetection is dynamically imported only when the backend is
 // offline, so the ~600 KB ONNX Runtime bundle stays out of the main chunk.
 import { DetectionTable } from '../components/ui'
@@ -9,28 +9,51 @@ export default function Live() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const timerRef = useRef<any>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const inFlightRef = useRef(false)
+  const mountedRef = useRef(false)
+  const requestRef = useRef(0)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<DetectResult | null>(null)
   const [fps, setFps] = useState(0)
   const [error, setError] = useState('')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState('')
+  // True while the browser is hiding camera names (no permission granted yet).
+  const [labelsHidden, setLabelsHidden] = useState(false)
+  const [enablingNames, setEnablingNames] = useState(false)
   const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState<'coco' | 'world'>('coco')
   const [classesText, setClassesText] = useState('person, car, dog')
   const [source, setSource] = useState<'backend' | 'browser' | null>(null)
   const [modelPct, setModelPct] = useState<number | null>(null)
+  const [promptStatus, setPromptStatus] = useState('')
   // Refs so the interval callback always reads the latest mode/prompts.
   const modeRef = useRef(mode); modeRef.current = mode
   const classesRef = useRef(classesText); classesRef.current = classesText
 
+  const refreshCameras = async () => {
+    const devices = await navigator.mediaDevices?.enumerateDevices()
+    if (!devices || !mountedRef.current) return
+    const cameras = devices.filter(device => device.kind === 'videoinput')
+    setDevices(cameras.filter(camera => camera.deviceId))
+    setLabelsHidden(!cameras.some(camera => camera.label))
+    setDeviceId(current => cameras.some(camera => camera.deviceId === current) ? current : '')
+  }
+
   useEffect(() => {
-    navigator.mediaDevices?.enumerateDevices().then(ds => setDevices(ds.filter(d => d.kind === 'videoinput'))).catch(() => null)
-    api.modelStatus().then(m => { if (m?.model_path?.includes('world')) setMode('world') }).catch(() => null)
-    return () => stop()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    mountedRef.current = true
+    const refresh = () => { void refreshCameras().catch(() => null) }
+    refresh()
+    navigator.mediaDevices?.addEventListener('devicechange', refresh)
+    window.addEventListener('focus', refresh)
+    api.modelStatus().then(m => { if (mountedRef.current && m?.model_path?.includes('world')) setMode('world') }).catch(() => null)
+    return () => {
+      mountedRef.current = false
+      navigator.mediaDevices?.removeEventListener('devicechange', refresh)
+      window.removeEventListener('focus', refresh)
+      stop()
+    }
   }, [])
 
   const draw = (dets: any[], w: number, h: number) => {
@@ -57,89 +80,146 @@ export default function Live() {
     // this tick instead of queuing another POST.
     if (inFlightRef.current) return
     const v = videoRef.current; if (!v || v.readyState < 2) return
+    const stream = streamRef.current
+    if (!stream || !v.videoWidth || !v.videoHeight) return
+    const mode = modeRef.current
+    const text = classesRef.current
+    const current = () => streamRef.current === stream && modeRef.current === mode &&
+      (mode !== 'world' || classesRef.current === text)
     inFlightRef.current = true
     try {
-      let res: DetectResult
-      if (modeRef.current === 'world') {
-        // YOLO-World only runs on the backend — there is no browser build of it.
-        if (!(await isBackendOnline())) {
-          setError('Any-object (YOLO-World) detection needs the Python backend — it cannot run in the browser. Switch to COCO mode to detect in-browser, or start the backend with python run.py.')
-          return
-        }
-        const off = document.createElement('canvas')
-        off.width = v.videoWidth; off.height = v.videoHeight
-        off.getContext('2d')!.drawImage(v, 0, 0)
-        const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
-        if (!blob) return
-        const prompts = [...new Set(classesRef.current.split(',').map(s => s.trim()).filter(Boolean))]
-        if (prompts.length === 0) throw new Error('Type at least one object name to detect, e.g. "person, dog".')
-        res = await api.openVocabFrame(blob, prompts)
-        setSource('backend')
-      } else if (await isBackendOnline()) {
-        const off = document.createElement('canvas')
-        off.width = v.videoWidth; off.height = v.videoHeight
-        off.getContext('2d')!.drawImage(v, 0, 0)
-        const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.8))
-        if (!blob) return
-        res = await api.detectFrame(blob)
-        setSource('backend')
-      } else {
-        // Backend unreachable: real YOLOv8 inference right here in the browser.
-        const { detectInBrowser } = await import('../lib/browserDetection')
-        res = await detectInBrowser(v, v.videoWidth, v.videoHeight, (loaded, total) => {
-          if (total > 0) setModelPct(Math.round((loaded / total) * 100))
-        })
-        setModelPct(null)
-        setSource('browser')
+      const prompts = mode === 'world' ? parseDetectionPrompts(text) : null
+      const frame = document.createElement('canvas')
+      frame.width = v.videoWidth
+      frame.height = v.videoHeight
+      frame.getContext('2d')!.drawImage(v, 0, 0)
+      const progress = (loaded: number, total: number) => {
+        if (total > 0 && current()) setModelPct(Math.round(loaded / total * 100))
       }
-      setResult(res); setFps(res.fps)
-      draw(res.detections, v.videoWidth, v.videoHeight)
-    } catch (e: any) { setError(e.message || 'Frame inference failed.') }
-    finally { inFlightRef.current = false; setModelPct(null) }
+      const { result: res, source } = await detectWithFallback<DetectResult>(
+        async () => {
+          const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.85))
+          if (!blob) throw new Error('Could not encode the camera frame.')
+          return prompts ? api.openVocabFrame(blob, prompts) : api.detectFrame(blob)
+        },
+        async () => {
+          if (prompts) {
+            const { detectOpenVocabInBrowser } = await import('../lib/browserOpenVocab')
+            return detectOpenVocabInBrowser(frame, frame.width, frame.height, prompts, progress,
+              (done, total, prompt) => {
+                if (current()) setPromptStatus(`Checking “${prompt}” (${done} of ${total})`)
+              })
+          }
+          const { detectInBrowser } = await import('../lib/browserDetection')
+          return detectInBrowser(frame, frame.width, frame.height, progress)
+        },
+      )
+      if (!current()) return
+      setError(''); setSource(source); setResult(res); setFps(res.fps)
+      draw(res.detections, frame.width, frame.height)
+    } catch (error) {
+      if (current()) setError(error instanceof Error ? error.message : 'Frame inference failed.')
+    } finally {
+      inFlightRef.current = false
+      if (mountedRef.current) { setModelPct(null); setPromptStatus('') }
+    }
   }
 
-  const start = async () => {
-    setError(''); setBusy(true)
+  const openCamera = async (preview: boolean) => {
+    const request = ++requestRef.current
+    const current = () => mountedRef.current && request === requestRef.current
+    setError('')
+    preview ? setEnablingNames(true) : setBusy(true)
+    let stream: MediaStream | undefined
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId } } : true, audio: false })
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access requires HTTPS or localhost.')
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: !preview && deviceId ? { deviceId: { exact: deviceId } } : true,
+        audio: false,
+      })
+      if (!current()) return
+      if (preview) {
+        await refreshCameras()
+        return
+      }
+      void refreshCameras().catch(() => null)
+      const video = videoRef.current
+      if (!video) return
       streamRef.current = stream
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
+      video.srcObject = stream
+      await video.play()
+      if (!current()) return
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (streamRef.current !== stream) return
+        stop()
+        setError('The active camera disconnected or access was revoked. Select a camera and start again.')
+        void refreshCameras().catch(() => null)
+      }, { once: true })
       setRunning(true)
-      timerRef.current = setInterval(captureLoop, 160) // ~6 fps, throttled for CPU inference
-    } catch (e: any) {
-      setError(e?.name === 'NotAllowedError' ? 'Camera access was denied by the browser. Allow camera access, or use Image / Video detection instead.' : `Could not start webcam: ${e?.message || e}`)
-    } finally { setBusy(false) }
+      timerRef.current = setInterval(captureLoop, 160)
+    } catch (error) {
+      if (!current()) return
+      if (!preview) stop()
+      const details: Record<string, string> = {
+        NotAllowedError: 'Allow camera access in your browser and device settings, then try again.',
+        NotFoundError: 'No camera is available. Connect a camera and try again.',
+        NotReadableError: 'The camera could not be opened. Close other apps using it and try again.',
+        OverconstrainedError: 'The selected camera is unavailable. Choose another camera and try again.',
+      }
+      const name = error instanceof Error ? error.name : ''
+      setError(details[name] || (error instanceof Error ? error.message : 'Could not start the camera.'))
+      void refreshCameras().catch(() => null)
+    } finally {
+      if (stream && stream !== streamRef.current) stream.getTracks().forEach(track => track.stop())
+      if (mountedRef.current) { setBusy(false); setEnablingNames(false) }
+    }
   }
+
   const stop = () => {
+    requestRef.current++
     if (timerRef.current) clearInterval(timerRef.current)
-    streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null
-    setRunning(false)
+    timerRef.current = null
+    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+    if (canvasRef.current) canvasRef.current.width = 0
+    if (!mountedRef.current) return
+    setRunning(false); setResult(null); setFps(0); setSource(null); setModelPct(null); setPromptStatus('')
   }
   const saveSnapshot = async () => {
-    if (source === 'browser') { toast('Snapshots are saved to history only when the backend is connected — in-browser results are not stored.', 'err'); return }
-    const v = videoRef.current; if (!v) return
+    const v = videoRef.current
+    if (source !== 'backend' || !v?.videoWidth || !v.videoHeight) return
+    const text = classesText
+    const openVocabulary = mode === 'world'
     const off = document.createElement('canvas'); off.width = v.videoWidth; off.height = v.videoHeight
     off.getContext('2d')!.drawImage(v, 0, 0)
     const blob = await new Promise<Blob | null>(r => off.toBlob(r, 'image/jpeg', 0.9))
     if (!blob) return
-    try { const r = await api.saveFrame(blob); toast(`Snapshot saved — ${r.count} object(s), record #${r.record_id}`) }
+    try { const r = await api.saveFrame(blob, openVocabulary ? parseDetectionPrompts(text) : undefined); toast(`Snapshot saved — ${r.count} object(s), record #${r.record_id}`) }
     catch (e: any) { toast(e.message, 'err') }
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <div className="card lg:col-span-2">
+    <div className="grid gap-4 xl:grid-cols-3">
+      <div className="card xl:col-span-2">
         <div className="flex flex-wrap items-center gap-2">
-          <select className="input max-w-xs" value={deviceId} onChange={e => setDeviceId(e.target.value)} aria-label="Camera device">
+          <select className="input max-w-xs" value={deviceId} disabled={running || busy || enablingNames} onChange={e => setDeviceId(e.target.value)} aria-label="Camera device">
             <option value="">Default camera</option>
             {devices.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${i + 1}`}</option>)}
           </select>
           {!running
-            ? <button className="btn-primary" onClick={start} disabled={busy}><Play size={15} /> {busy ? 'Starting…' : 'Start webcam'}</button>
+            ? <button className="btn-primary" onClick={() => openCamera(false)} disabled={busy || enablingNames}><Play size={15} /> {busy ? 'Starting…' : 'Start webcam'}</button>
             : <button className="btn-danger" onClick={stop}><Square size={15} /> Stop webcam</button>}
-          <button className="btn-ghost" onClick={saveSnapshot} disabled={!running}><Download size={15} /> Save snapshot</button>
+          <button className="btn-ghost" onClick={saveSnapshot} disabled={!running || source !== 'backend'}><Download size={15} /> Save snapshot</button>
           <span className={`ml-auto chip ${running ? '' : '!bg-white/5 !text-slate-400 !border-white/10'}`}>{running ? '● LIVE' : '○ OFFLINE'}</span>
         </div>
+        {labelsHidden && !running && (
+          <p className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm text-amber-200">
+            Camera names are hidden — browsers do not reveal them until you allow camera access, so this list only shows generic names like “Camera 1”.{' '}
+            <button className="font-semibold underline" onClick={() => openCamera(true)} disabled={enablingNames || busy}>{enablingNames ? 'Asking…' : 'Enable camera names'}</button>
+          </p>
+        )}
+        <p className="mt-2 text-xs text-slate-500">Camera access requires HTTPS or localhost. The list shows the cameras your browser makes available.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>COCO classes (80)</button>
           <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
@@ -148,18 +228,24 @@ export default function Live() {
           <div className="mt-3">
             <label className="label">Objects to find (comma-separated, up to 20)</label>
             <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="person, car, dog" aria-label="Object names to detect" />
-            <p className="mt-1 text-xs text-slate-500">YOLO-World searches for the objects you name. First use downloads the detector (~25 MB) and its text encoder (~338 MiB).</p>
+            <p className="mt-1 text-xs text-slate-500">Searches for the objects you name. With the backend connected this uses YOLO-World (first use downloads its weights and text encoder). Without a backend it runs Grounding DINO in your browser instead (~205 MB download once, slower, experimental — each object checked takes several seconds, so live video is snapshots, not smooth video).</p>
+            <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Try an object outside the COCO list">
+              {['microphone', 'sunglasses', 'headphones', 'traffic cone', 'whiteboard', 'coffee mug'].map(p => (
+                <button key={p} type="button" className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs text-violet-200 hover:bg-violet-500/20" onClick={() => setClassesText(p)} title="Try this non-COCO object">{p}</button>
+              ))}
+            </div>
           </div>
         )}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
-        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}% (~12 MB, once only — it is cached in your browser after that).</p>}
-        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser — no backend connected. Real YOLOv8 inference on your device; frames never leave this browser and results are not saved to history.</p>}
+        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
+        {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Running in your browser. Real {mode === 'world' ? 'Grounding DINO open-vocabulary' : 'YOLOv8'} inference on your device; browser results are not saved to history.</p>}
         <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-black aspect-video">
           <video ref={videoRef} playsInline muted className="h-full w-full object-contain" />
-          <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
-          {!running && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400"><CameraOff size={36} /><p className="text-sm">Webcam is off — press “Start webcam” to begin real-time detection.</p><p className="text-xs text-slate-500">Your camera stays in this browser; frames go to the backend when it is connected, otherwise they are detected right here in the browser.</p></div>}
+          <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full object-contain" />
+          {!running && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400"><CameraOff size={36} /><p className="px-4 text-center text-sm">Webcam is off — press “Start webcam” to begin real-time detection.</p></div>}
         </div>
-        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Frames are captured at ~6 fps. No fake stream is ever shown.</p>
+        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Camera frames are sampled up to 6 times per second.</p>
       </div>
       <div className="space-y-4">
         <div className="card">
@@ -170,7 +256,7 @@ export default function Live() {
             <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{result ? (result.avg_confidence * 100).toFixed(1) + '%' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result ? result.inference_ms.toFixed(0) + ' ms' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Measured FPS</span><b>{fps ? fps.toFixed(1) : '—'}</b></p>
-            <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—'}</b></p>
+            <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{(result as any)?.engine || (source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—')}</b></p>
           </div>
         </div>
         <div className="card">

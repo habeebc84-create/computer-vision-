@@ -1,25 +1,20 @@
-# Real-Time Object Detection System
+# Real-Time Object Detection System — YOLOv8 & Deep Learning
 
 **ITA0523 — Computer Vision capstone project**
 
-The app detects objects in uploaded images, video and webcam frames. To try a photo, open **Image Detection**, choose a JPG or PNG, and click **Run detection**.
+A full-stack, production-style web application that detects objects in real time
+from a webcam and in uploaded images — using real YOLOv8
+inference (Ultralytics, PyTorch, OpenCV). No fake detections, no simulated
+results: every bounding box, label and confidence score comes from the model.
 
 | Image mode | Objects it can find | Where it runs |
 | --- | --- | --- |
 | Everyday objects (365) | YOLOE with the Objects365 vocabulary, including categories such as glasses and sneakers | Browser, with weights bundled in the frontend |
 | Packages (trained) | Parcels, using a YOLOv8n detector fine-tuned on factory package photos | Browser, with weights bundled in the frontend |
 | COCO / selected backend model | The original 80 COCO categories or the labels learned by your selected checkpoint | Python backend, with a browser fallback for COCO |
-| Search by name | Object names you enter as prompts for YOLO-World | Python backend |
+| Search by name | Object names you enter as prompts for YOLO-World | Python backend or Grounding DINO in the browser |
 
-Everyday objects is the default on a fresh install. For a category outside its vocabulary, try Search by name. Small, occluded or unfamiliar objects can still be missed. See the [everyday model details](frontend/public/models/objects365.md) and [package training and held-out results](models/package-model.md).
-
-To run the image detector locally with Node.js, start the frontend and open the local address printed by Vite.
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
+Everyday objects is the default on a fresh install. The first frontend build or development launch downloads and verifies the 38 MB Objects365 weights. For a category outside its vocabulary, try Search by name. Small, occluded or unfamiliar objects can still be missed. See the [everyday model details](frontend/public/models/objects365.md) and [package training and held-out results](models/package-model.md).
 
 ## Modules (exactly as specified)
 
@@ -31,8 +26,9 @@ npm run dev
    a background thread; live epoch / loss / precision / recall / mAP50 /
    mAP50-95 from `results.csv`; `best.pt` saved, downloadable and loadable.
 3. **Module 3 — Inference & Visualization** — live webcam (browser camera,
-   frames sent to the backend), image detection with annotated output, video
-   detection frame-by-frame with progress and downloadable processed video.
+   frames sent to the backend) and image detection with annotated output.
+   Video detection was removed from the website; the backend still processes
+   videos when run locally (see API table).
 
 Plus: Overview Dashboard, Detection History (SQLite), Analytics & Reports
 (CSV + PDF), Settings (model, conf/IoU thresholds, image size, device).
@@ -88,11 +84,31 @@ cd ..
 python run.py
 ```
 
-Open **http://localhost:8000**. The default COCO backend downloads YOLOv8n weights on first inference. The Everyday objects and Packages browser modes load their weights from the frontend.
+Open **http://localhost:8000**. The first inference downloads `yolov8n.pt`
+(~6 MB, COCO 80 classes) from Ultralytics into `models/` — internet is
+required once for that download. The `.pt` file is git-ignored on purpose.
 
-## Static hosting and the Python backend
+## Why detection doesn't work on Vercel
 
-The header shows **Browser mode** when the backend is unavailable. A static deployment can run both bundled image models and COCO browser inference. To enable search by name, custom backend weights, training, video and history, configure a persistent Python backend.
+**Short version: Vercel hosts only the static frontend. There is no Python
+backend there, so every `/api/*` call fails — but image and live detection
+now fall back to running YOLOv8 in the browser (see "In-browser detection"
+below), so detection still works on the Vercel site. Training and
+history still need a backend.**
+
+This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
+backend. Vercel is a static/serverless host — it can serve the dashboard UI,
+but it cannot run the backend: PyTorch + Ultralytics are hundreds of MB (far
+over Vercel's serverless function size limit), training and video processing
+run for minutes (over the request timeout), and the backend keeps a model in
+memory and writes to SQLite/disk, which serverless functions don't do.
+
+What you see on a Vercel deploy: the dashboard loads, the header shows an
+amber **"Backend offline"** banner, and every detection/training/history
+action fails with a clear message instead of a wall of HTML — the frontend
+never pretends the backend is there.
+
+**To make a Vercel frontend actually detect objects, point it at a backend:**
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
@@ -115,16 +131,110 @@ frontend itself on the same origin, and `VITE_API_URL` stays empty.
 
 ## In-browser detection (no backend)
 
-The browser runs ONNX Runtime Web using the WASM files from the frontend build. It resizes the image with padding, runs the selected model, applies the confidence and IoU thresholds from Settings, then maps the boxes back to the original image. Browser results can be downloaded as annotated images.
+**Update: image and live-webcam detection now work even when the backend is
+offline.** When the frontend cannot reach the backend or the detection API
+is unavailable, the Image and Live pages automatically fall back to running real YOLOv8 inference inside the
+browser — the page shows a violet chip, "Running in your browser", so a browser result is never passed off as a backend result.
 
-The Everyday objects and Packages models run locally in the browser, including on a static host. The original COCO image mode and webcam fallback download the original 80-class model from Hugging Face on first use. Browser results stay out of backend history.
+How it works:
+
+- The browser downloads `yolov8n.onnx` (~12 MB, once only) from Habeeb's own
+  Hugging Face model repo
+  (`https://huggingface.co/habeebc12/yolov8n-onnx/resolve/main/yolov8n.onnx`)
+  and caches it in Cache Storage. The `.onnx` file is **not** committed to
+  the repo. (First version fetched it from Ultralytics' GitHub release
+  download — that host sends no CORS headers, so browsers blocked the
+  download with "Failed to fetch"; Hugging Face serves it with
+  `Access-Control-Allow-Origin: *`, which is why the model lives there.)
+- Inference runs with ONNX Runtime Web (`onnxruntime-web` 1.20.1, single-
+  threaded wasm; its wasm files load from the jsDelivr CDN), using the same
+  preprocessing and NMS as the backend: 640×640 letterbox (grey 114 padding,
+  like Ultralytics), NCHW float32, YOLOv8 `84×8400` output parsing,
+  confidence threshold + class-aware NMS, boxes rescaled to the original
+  image. The confidence/IoU thresholds come from Settings (saved on the
+  device in `localStorage`, so they work offline too).
+- The ONNX code is lazy-loaded — the runtime only downloads when the backend
+  is actually unreachable, so the normal (backend) path costs nothing extra.
+
+### Open-vocabulary in the browser (Grounding DINO)
+
+**“Any object — type its name” also works with no backend.** When the backend
+is unreachable and the user picks open-vocab mode, the Image and Live pages
+run real Grounding DINO inference in the browser instead of erroring:
+
+- Model: `onnx-community/grounding-dino-tiny-ONNX` via
+  `@huggingface/transformers` 4.3.2 (`zero-shot-object-detection` pipeline,
+  `dtype: 'q8'`), loaded lazily only when open-vocab mode is used offline.
+  The q8 weights (`model_quantized.onnx`, ~204 MB) + tokenizer (~1 MB) download
+  once from Hugging Face (CORS-enabled) and are cached by Transformers.js in
+  Cache Storage — about **~205 MB total, once only**. Nothing is committed to
+  the repo. (The `Xenova/grounding-dino-tiny` repo named in older docs is no
+  longer reachable — 401 — so the maintained `onnx-community` build is used.)
+- Results use the same shape as the COCO path (detections with
+  `class_name` = the matched prompt text, confidence, bbox in original-image
+  pixels, annotated image, `source: 'browser'`, engine
+  `In-browser (Grounding DINO)`). Pipeline boxes are already in original
+  pixels; the code only clamps them into the image, and drops near-duplicate
+  boxes for the same prompt (IoU > 0.5).
+- The confidence threshold comes from Settings (saved in `localStorage`),
+  default 0.25. Type specific phrases (“red bus” beats “thing”); up to 20
+  prompts at a time. Preset chips on the Image/Live pages try objects that
+  are **not** in the 80 COCO classes (microphone, sunglasses, headphones,
+  traffic cone, whiteboard, coffee mug).
+
+Limits — stated honestly:
+
+- **Slow.** Grounding DINO tiny is a ~172M-parameter vision-language model,
+  and the browser checks one object at a time: expect several seconds per
+  prompt on a typical laptop CPU (9–20 s per prompt measured in Node on a
+  throttled shared CPU; faster on a real laptop, still seconds). Photos are
+  fine; live video is snapshots, not smooth video. The COCO YOLOv8 path stays
+  the fast default for the 80 classes.
+- **Experimental accuracy.** It can confuse lookalike objects and invents
+  weak boxes for things that are not there if the threshold is set low; the
+  Node verification below checks that a prompt with no match (“elephant” on
+  the bus photo) is not invented.
+- **Big first download.** ~205 MB once, versus ~12 MB for the COCO model.
+  After that it is cached and loads offline.
+
+Verified in Node (same library, same model, `dtype: 'q8'`, threshold 0.25,
+Ultralytics bus photo 810×1080, one detector call per prompt):
+`bus.` → bus 90.2%; `person.` → 4 people (83.9 / 80.1 / 78.9 / 59.8%);
+`elephant.` → 0 detections — nothing invented. Total 5 detections in 32 s
+for 3 prompts on a throttled shared CPU (9–12 s per prompt; faster on a
+real laptop). Boxes are in original-image pixels (one was `xmin: -1`, which
+the browser code clamps). Two things the test caught and the code handles:
+prompts must be passed one call at a time (an array errors — the exported
+text encoder has a fixed batch size of 1), and each phrase needs its trailing
+period (without it the text encoder errors). A single joined query
+(`"bus. person. elephant."`) was also tried and rejected: it found only the
+bus and missed all 4 people, in both q8 and fp32.
+
+Limits — stated honestly (COCO path):
+
+- **COCO 80 classes only** for the fast path. Open-vocabulary now also works
+  in the browser (see above) — the old “stays backend-only” note no longer applies.
+- **Slower than the backend.** Measured ~180 ms/frame with native CPU
+  inference in Node; in-browser wasm is slower (~2 fps effective for live
+  video on a typical laptop). Photos are fine; live video is snapshots, not
+  smooth video, until run on a faster machine.
+- **Training and history still need the backend.** They are not
+  faked in the browser: those pages keep saying the backend is required.
+  In-browser results are not saved to history. Video detection was removed
+  from the website entirely.
+- **Tiny edge objects can differ from the backend.** Verified on the
+  Ultralytics bus photo: the browser found the bus (84%) and all 4 people
+  (88/88/87/43%), matching the backend's 6 detections except the tiny
+  stop sign at the image edge (backend 26%, browser max score 4%) — a
+  marginal object whose score depends on resize details.
 
 ## Built-in datasets (one-click download)
 
 Module 1 — Dataset has a **"Recommended datasets"** section with two official
 Ultralytics COCO samples, verified live (HTTP 200) — click **Download &
 import** and the backend downloads, verifies and imports them into
-`dataset/images/all/` + `dataset/labels/all/`, and maps the 80 COCO labels into the existing class list. Then Split the dataset and train in Module 2 as usual.
+`dataset/images/all/` + `dataset/labels/all/`, with class names set to the
+80 COCO classes. Then Split the dataset and train in Module 2 as usual.
 
 | Dataset | Images | Classes | Size | Licence |
 |---|---|---|---|---|
@@ -156,26 +266,56 @@ npm run dev
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
 
-## Search for objects by name
+## Open-vocabulary detection (search by object name)
 
-In **Image Detection**, choose **Search by name** and enter up to 20 comma-separated names. In **Live Detection**, choose **Any object — type its name**. The Python backend uses YOLO-World to compare those prompts with regions of the image. Choosing YOLOv8s-World v2 in Settings makes it the initial mode for those pages.
+The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
+"person", "car", "dog" and 77 others. To look for objects beyond COCO, use
+**YOLO-World** (`yolov8s-worldv2.pt`, Ultralytics): it is an
+open-vocabulary detector, so you type the object names in plain English and
+it searches for them — for example, "red bus", "traffic light", "laptop",
+or "cricket bat". This mode works without a training dataset.
 
-First use downloads the YOLO-World weights (about 25 MB) and CLIP text encoder (about 338 MiB). Specific prompts such as `sneaker` or `traffic light` can help. Uncommon objects and small objects can still be missed.
+How to use it:
 
-The API accepts a multipart image and `classes` at `POST /api/detect/open-vocab/image` and a frame and `classes` at `POST /api/detect/open-vocab/frame`. The classes field accepts a JSON array or comma-separated names.
+1. **Image Detection** or **Live Detection** — switch the toggle to
+   **"Any object — type its name"** and type comma-separated object names
+   (e.g. `red bus, traffic light, dog`, up to 20), then run detection as
+   usual. Results show your prompted names, with the same boxes, confidence
+   and history records as COCO detection (history type `open-vocab`).
+2. Or pick **YOLOv8s-World v2** in **Settings → Model** — Image and Live
+   then start in Any-object mode automatically.
+3. API: `POST /api/detect/open-vocab/image` (multipart image + `classes`
+   form field, JSON array or comma-separated text) and
+   `POST /api/detect/open-vocab/frame` (live frames, no history record).
+   `GET /api/models/available` lists all selectable models.
+
+Notes and limits (honest):
+
+- The world weights (~25 MB) download once from Ultralytics on first use
+  into `models/` (git-ignored). Without internet the first open-vocab call
+  returns a clear 503 error — it never invents boxes.
+- Prompt wording matters: specific names ("red bus") work better than vague
+  ones ("thing"). It is slower and less accurate than a COCO model on the
+  classes that model was trained for, and it can occasionally mistake a
+  similar-looking object — always check the confidence and the box.
+- It does not "know every image in the world" — it matches your words
+  against what it sees using a vision-language model, so unusual or very
+  small objects may be missed. For a fixed set of objects you detect often,
+  a custom-trained model (Module 2) is still the more accurate choice.
 
 ## Using the app
 
 - **Overview Dashboard** — totals, class distribution and activity from
   recorded detections only. Empty states until the first real detection.
-- **Live Detection** — pick a camera, Start webcam, allow browser camera
-  access. Frames are captured at ~6 fps and POSTed to `/api/detect/frame`;
+- **Live Detection** — choose **Enable camera names** or **Start webcam**
+  and allow browser camera access. The camera list refreshes after permission,
+  when the window regains focus, and when the browser reports a device change.
+  Stop the stream before switching cameras. Frames are sampled up to ~6 fps;
   boxes/labels/confidence are drawn on a canvas overlay with measured FPS
   and inference ms. Save snapshot stores that frame in history.
-- **Image Detection** — upload JPG/PNG, Run detection, download the
-  annotated image.
-- **Video Detection** — upload MP4/AVI/MOV, watch real frame progress,
-  download the processed MP4.
+- **Image Detection** — upload JPG, PNG, WebP, GIF, BMP or AVIF (up to 20 MB),
+  run detection, and download the annotated image. Animated images use the first
+  frame on the backend. Convert HEIC photos to JPEG before uploading.
 - **Dataset Preparation** — upload images, add classes, click an image and
   drag to draw boxes, Save annotations, set the train % and Split — this
   writes `dataset/data.yaml` and the `images/{train,val}` +
@@ -235,7 +375,7 @@ into `dataset/labels/all/` and the matching images into
   `yolov8n.pt` (~6 MB). Check internet, then retry. `models/` must be writable.
 - **Webcam won't start** — the browser must be allowed camera access, and
   the page must be served over `localhost` (or HTTPS). If denied, use Image
-  or Video detection instead; the error is shown in the UI.
+  detection instead; the error is shown in the UI.
 - **Training fails: "dataset/data.yaml not found"** — complete Module 1
   (upload + classes + split) first. Training needs annotated images; images
   with no annotations produce a warning at split time.
@@ -245,7 +385,7 @@ into `dataset/labels/all/` and the matching images into
 - **Video processing slow** — also CPU-bound; progress is real frame count,
   so a long video takes a while. Short clips first.
 - **Port 8000 in use** — stop the other process, or edit the port in `run.py`.
-- **"Could not decode image"** — upload a valid JPG/PNG under 20 MB.
+- **"Could not decode image"** — upload a valid JPG, PNG, WebP, GIF, BMP or AVIF under 20 MB.
 - **Charts empty** — by design: analytics only show recorded detections.
   Run a detection first.
 
@@ -273,9 +413,10 @@ default 7860 on Spaces).
 4. When the Space is running, copy its URL (e.g.
    `https://<user>-object-detection-backend.hf.space`) and set it as
    `VITE_API_URL` in the Vercel project, then redeploy the frontend.
-   The site then shows "Backend connected" and detection, training, video
+   The site then shows "Backend connected" and detection, training
    and history all work live.
 
 Notes: Space storage is ephemeral — detection history and uploads reset when
 the Space restarts. Training on the free CPU tier is slow; use small
-datasets (COCO8/COCO128) and few epochs. First use of Search by name also downloads the detector and its text encoder.
+datasets (COCO8/COCO128) and few epochs. The YOLO-World model downloads
+(~25 MB) on first open-vocab use.

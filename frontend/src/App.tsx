@@ -1,9 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Layout, Toasts, PageId } from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Live from './pages/Live'
 import ImageDetect from './pages/ImageDetect'
-import VideoDetect from './pages/VideoDetect'
 import Dataset from './pages/Dataset'
 import Training from './pages/Training'
 import Inference from './pages/Inference'
@@ -13,12 +12,12 @@ import Settings from './pages/Settings'
 
 export default function App() {
   const [page, setPage] = useState<PageId>('dashboard')
+  useEffect(() => { window.scrollTo(0, 0) }, [page])
   return (
     <Layout page={page} setPage={setPage}>
       {page === 'dashboard' && <Dashboard go={setPage} />}
       {page === 'live' && <Live />}
       {page === 'image' && <ImageDetect />}
-      {page === 'video' && <VideoDetect />}
       {page === 'dataset' && <Dataset />}
       {page === 'training' && <Training />}
       {page === 'inference' && <Inference go={setPage} />}

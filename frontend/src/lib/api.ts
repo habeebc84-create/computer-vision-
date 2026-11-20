@@ -1,5 +1,5 @@
 export interface Detection { class_id: number; class_name: string; confidence: number; bbox: number[] }
-export interface DetectResult { detections: Detection[]; count: number; unique_classes: string[]; avg_confidence: number; inference_ms: number; fps: number; record_id?: number; annotated_url?: string; original_name?: string }
+export interface DetectResult { detections: Detection[]; count: number; unique_classes: string[]; avg_confidence: number; inference_ms: number; fps: number; record_id?: number; history_error?: string; annotated_url?: string; original_name?: string }
 export interface ModelStatus { loaded: boolean; model_path: string; device: string; classes: number; class_names: string[]; loaded_at: string | null; error: string | null; conf: number; iou: number; imgsz: number }
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
@@ -22,16 +22,6 @@ export function resolveUrl(u: string): string {
   return API_BASE + (u.startsWith('/') ? u : `/${u}`)
 }
 
-export class ApiError extends Error {
-  constructor(message: string, public readonly status?: number) {
-    super(message)
-  }
-
-  get backendUnavailable() {
-    return this.status === undefined || this.status === 404 || this.status >= 500
-  }
-}
-
 const BACKEND_OFFLINE_404 = 'Backend not reachable (API returned 404). Run the Python backend with python run.py, or set VITE_API_URL to your backend URL.'
 const BACKEND_OFFLINE_NET = 'Backend not reachable — could not connect. Run the Python backend with python run.py, or set VITE_API_URL to your backend URL.'
 
@@ -42,53 +32,86 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     r = await fetch(url, init)
   } catch {
     // Network failure (backend down, wrong VITE_API_URL, CORS) — never show a stack trace.
-    throw new ApiError(BACKEND_OFFLINE_NET)
+    throw new ApiError(BACKEND_OFFLINE_NET, 0)
   }
   const text = await r.text()
   if (!r.ok) {
-    // Real backend errors are JSON with `detail` — keep those verbatim.
-    const ct = r.headers.get('content-type') || ''
-    if (ct.includes('application/json')) {
-      let detail: unknown
+    let message: string | undefined
+    if (r.headers.get('content-type')?.includes('application/json')) {
       try {
         const data = JSON.parse(text)
-        detail = data?.detail || data?.message
-      } catch { /* Use the HTTP status when the response has invalid JSON. */ }
-      if (detail) throw new ApiError(String(detail), r.status)
+        const detail = data.detail || data.message
+        if (typeof detail === 'string') message = detail
+      } catch { /* Proxies can return invalid JSON. */ }
     }
-    if (r.status === 404 && path.startsWith('/api')) throw new ApiError(BACKEND_OFFLINE_404, r.status)
-    throw new ApiError(`Request failed (${r.status})`, r.status)
+    if (r.status === 404 && !message) message = BACKEND_OFFLINE_404
+    throw new ApiError(message || `Request failed (${r.status})`, r.status)
   }
-  if (!text) return {} as T
   try {
     return JSON.parse(text) as T
   } catch {
-    throw new Error(`Request failed (${r.status})`)
+    throw new ApiError('Backend returned an invalid response.', 0)
   }
 }
+
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+
+  get backendUnavailable() { return this.status === 0 || this.status === 404 || this.status >= 500 }
+}
+
+export async function detectWithFallback<T>(backend: () => Promise<T>, browser: () => Promise<T>) {
+  let backendError: ApiError | undefined
+  if (await isBackendOnline()) {
+    try {
+      return { result: await backend(), source: 'backend' as const }
+    } catch (error) {
+      if (!(error instanceof ApiError) || !error.backendUnavailable) throw error
+      backendError = error
+    }
+  }
+  try {
+    return { result: await browser(), source: 'browser' as const }
+  } catch (error) {
+    if (backendError) throw new Error(`${backendError.message} Browser detection also failed: ${String(error)}`)
+    throw error
+  }
+}
+
+export function parseDetectionPrompts(text: string): string[] {
+  const prompts = new Map<string, string>()
+  for (const part of text.split(',')) {
+    const name = part.trim()
+    if (!name || prompts.has(name.toLowerCase())) continue
+    if ([...name].length > 40) throw new Error('Object names must be 40 characters or fewer.')
+    prompts.set(name.toLowerCase(), name)
+  }
+  if (!prompts.size) throw new Error('Type at least one object name, such as microphone or headphones.')
+  if (prompts.size > 20) throw new Error('At most 20 object names at a time.')
+  return [...prompts.values()]
+}
+
 // Cached backend reachability: health is cheap, but Live checks it every
 // frame tick — cache the answer for 10 s so the check costs nothing.
 let _healthCache: { at: number; online: boolean } | null = null
-let healthProbe: Promise<boolean> | null = null
-export function isBackendOnline(): Promise<boolean> {
-  const cached = backendOnlineCached()
-  if (cached !== null) return Promise.resolve(cached)
-  if (!healthProbe) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 5000)
-    healthProbe = api.health(controller.signal)
-      .then(health => health?.status === 'ok', () => false)
-      .then(online => { _healthCache = { at: Date.now(), online }; return online })
-      .finally(() => { clearTimeout(timer); healthProbe = null })
-  }
-  return healthProbe
+export async function isBackendOnline(): Promise<boolean> {
+  const now = Date.now()
+  if (_healthCache && now - _healthCache.at < 10_000) return _healthCache.online
+  let online = false
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 4000)
+  try { online = (await api.health({ signal: controller.signal })).status === 'ok' }
+  catch { online = false }
+  finally { clearTimeout(timeout) }
+  _healthCache = { at: Date.now(), online }
+  return online
 }
 export function backendOnlineCached(): boolean | null {
   return _healthCache && Date.now() - _healthCache.at < 10_000 ? _healthCache.online : null
 }
 
 export const api = {
-  health: (signal?: AbortSignal) => req<{ status: string; model_loaded: boolean; device: string }>('/api/health', { signal, cache: 'no-store' }),
+  health: (init?: RequestInit) => req<{ status: string; model_loaded: boolean; device: string }>('/api/health', init),
   modelStatus: () => req<ModelStatus>('/api/model/status'),
   loadModel: (path: string) => req<ModelStatus>('/api/model/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) }),
   getSettings: () => req<any>('/api/settings'),
@@ -110,8 +133,9 @@ export const api = {
     const fd = new FormData(); fd.append('frame', blob, 'frame.jpg')
     return req<DetectResult>('/api/detect/frame', { method: 'POST', body: fd })
   },
-  saveFrame: async (blob: Blob) => {
+  saveFrame: async (blob: Blob, prompts?: string[]) => {
     const fd = new FormData(); fd.append('frame', blob, 'frame.jpg')
+    if (prompts) fd.append('classes', JSON.stringify(prompts))
     return req<DetectResult>('/api/detect/frame/save', { method: 'POST', body: fd })
   },
   startVideo: async (file: File) => {
@@ -129,7 +153,7 @@ export const api = {
   dsImages: () => req<any[]>('/api/dataset/images'),
   dsUpload: async (files: FileList | File[]) => {
     const fd = new FormData(); Array.from(files).forEach(f => fd.append('files', f))
-    return req<any>('/api/dataset/upload', { method: 'POST', body: fd })
+    return req<{ saved: string[]; skipped: string[]; errors?: { file: string; message: string }[] }>('/api/dataset/upload', { method: 'POST', body: fd })
   },
   dsDelete: (name: string) => req(`/api/dataset/images/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   dsClasses: () => req<{ classes: string[] }>('/api/dataset/classes'),

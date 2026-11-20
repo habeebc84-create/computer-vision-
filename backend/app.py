@@ -2,17 +2,19 @@
 Serves the built React frontend statically and exposes /api/* endpoints.
 Run:  python run.py   ->  http://localhost:8000
 """
-import json, shutil, time, uuid
+import json, logging, shutil, sqlite3, time, uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from detection import (AVAILABLE_MODELS, load_settings, manager, save_settings,
                      validate_open_vocab_classes, world_manager)
-from dataset_manager import (ALLOWED, IMG_ALL, LBL_ALL, ensure_dirs, get_annotations,
+from dataset_manager import (IMG_ALL, LBL_ALL, MAX_UPLOAD_BYTES, ensure_dirs, get_annotations,
+                             insert_image,
                              get_classes, list_images, save_annotation, set_classes,
                              split_dataset, stats, export_zip)
 from model_training import job as train_job
@@ -24,11 +26,17 @@ import analytics, report_generator
 BASE = Path(__file__).resolve().parent.parent
 OUT_IMG = BASE / "outputs" / "images"; OUT_VID = BASE / "outputs" / "videos"
 OUT_REP = BASE / "outputs" / "reports"; UP = BASE / "uploads"
-for d in (OUT_IMG, OUT_VID, OUT_REP, UP): d.mkdir(parents=True, exist_ok=True)
+# Defensive: a fresh clone has none of these directories (git-ignored/empty),
+# and the /dataset static mount below crashes at import time if dataset/
+# does not exist. run.py creates them too; this covers importing app.py
+# directly (uvicorn, tests). dataset_manager.ensure_dirs() adds the
+# dataset/images + dataset/labels subdirectories.
+for d in (OUT_IMG, OUT_VID, OUT_REP, UP, BASE / "dataset", BASE / "models"):
+    d.mkdir(parents=True, exist_ok=True)
+ensure_dirs()
 
 app = FastAPI(title="Real-Time Object Detection System", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-ensure_dirs()
 analytics.init_db()
 video_jobs = {}
 _frame_times = []
@@ -92,24 +100,37 @@ def _summary(dets, ms):
             "inference_ms": round(ms, 1),
             "fps": round(1000/max(ms, 0.01), 1)}
 
+def _store_detection(kind, annotated, dets, ms, model):
+    name = f"{kind}_{uuid.uuid4().hex}.jpg"
+    path = OUT_IMG / name
+    output_path = f"outputs/images/{name}"
+    try:
+        path.write_bytes(encode_jpeg(annotated))
+        record_id = analytics.record(kind, dets, fps=1000/max(ms, .01), inference_ms=ms,
+                                     output_path=output_path, model=model or "")
+    except (OSError, sqlite3.Error) as exc:
+        logging.getLogger(__name__).exception("Could not save a detection record")
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).exception("Could not remove an incomplete detection output")
+        if kind == "live":
+            raise HTTPException(503, "Snapshot could not be saved to history. Check backend storage.") from exc
+        return {"history_error": "Detection completed, but history storage is unavailable."}
+    return {"record_id": record_id, "annotated_url": f"/{output_path}"}
+
 @app.post("/api/detect/image")
 async def detect_image(file: UploadFile = File(...)):
-    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
-        raise HTTPException(400, "Upload a JPG or PNG image.")
-    data = await file.read()
+    data = await file.read(20*1024*1024 + 1)
     if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
     try: img = decode_image(data)
     except ValueError as e: raise HTTPException(400, str(e))
     try: dets, ms = manager.detect_array(img)
     except Exception as e: raise HTTPException(503, f"Model error: {e}")
     annotated = manager.annotate(img, dets)
-    name = f"{int(time.time())}_{Path(file.filename or 'image').stem}.jpg"
-    (OUT_IMG / name).write_bytes(encode_jpeg(annotated))
-    rid = analytics.record("image", dets, fps=1000/max(ms, .01), inference_ms=ms,
-                           output_path=f"outputs/images/{name}", model=manager.model_path or "")
     out = _summary(dets, ms)
-    out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}",
-                "original_name": file.filename})
+    out.update(_store_detection("image", annotated, dets, ms, manager.model_path))
+    out["original_name"] = file.filename
     return out
 
 @app.post("/api/detect/frame")
@@ -151,9 +172,7 @@ async def detect_open_vocab_image(file: UploadFile = File(...), classes: str = F
     in `classes`. Real inference only — a missing/unreachable world model is
     a clear 503, never invented boxes."""
     prompts = _parse_classes(classes)
-    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
-        raise HTTPException(400, "Upload a JPG or PNG image.")
-    data = await file.read()
+    data = await file.read(20*1024*1024 + 1)
     if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
     try: img = decode_image(data)
     except ValueError as e: raise HTTPException(400, str(e))
@@ -161,14 +180,9 @@ async def detect_open_vocab_image(file: UploadFile = File(...), classes: str = F
     except RuntimeError as e: raise HTTPException(503, str(e))
     except Exception as e: raise HTTPException(503, f"Model error: {e}")
     annotated = manager.annotate(img, dets)
-    name = f"{int(time.time())}_{Path(file.filename or 'image').stem}_world.jpg"
-    (OUT_IMG / name).write_bytes(encode_jpeg(annotated))
-    rid = analytics.record("open-vocab", dets, fps=1000/max(ms, .01), inference_ms=ms,
-                           output_path=f"outputs/images/{name}",
-                           model=world_manager.model_path or "models/yolov8s-worldv2.pt")
     out = _summary(dets, ms)
-    out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}",
-                "original_name": file.filename, "prompts": prompts})
+    out.update(_store_detection("open-vocab", annotated, dets, ms, world_manager.model_path))
+    out.update({"original_name": file.filename, "prompts": prompts})
     return out
 
 @app.post("/api/detect/open-vocab/frame")
@@ -188,15 +202,21 @@ async def detect_open_vocab_frame(frame: UploadFile = File(...), classes: str = 
     return out
 
 @app.post("/api/detect/frame/save")
-async def save_frame(frame: UploadFile = File(...)):
+async def save_frame(frame: UploadFile = File(...), classes: str | None = Form(None)):
+    prompts = _parse_classes(classes) if classes is not None else None
     data = await frame.read()
-    img = decode_image(data)
-    dets, ms = manager.detect_array(img)
-    name = f"live_{int(time.time())}.jpg"
-    (OUT_IMG / name).write_bytes(encode_jpeg(manager.annotate(img, dets)))
-    rid = analytics.record("live", dets, fps=1000/max(ms, .01), inference_ms=ms,
-                           output_path=f"outputs/images/{name}", model=manager.model_path or "")
-    out = _summary(dets, ms); out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}"})
+    try: img = decode_image(data)
+    except ValueError as e: raise HTTPException(400, str(e))
+    try:
+        if prompts is None:
+            dets, ms = manager.detect_array(img)
+            model_path = manager.model_path
+        else:
+            dets, ms = world_manager.detect_array(img, prompts)
+            model_path = world_manager.model_path
+    except Exception as e: raise HTTPException(503, f"Model error: {e}")
+    out = _summary(dets, ms)
+    out.update(_store_detection("live", manager.annotate(img, dets), dets, ms, model_path))
     return out
 
 # ---------- Video ----------
@@ -240,13 +260,23 @@ def ds_images(): return list_images()
 
 @app.post("/api/dataset/upload")
 async def ds_upload(files: list[UploadFile] = File(...)):
-    ensure_dirs(); saved, skipped = [], []
-    for f in files:
-        ext = Path(f.filename or "").suffix.lower()
-        if ext not in ALLOWED: skipped.append(f.filename); continue
-        dest = IMG_ALL / Path(f.filename).name
-        dest.write_bytes(await f.read()); saved.append(f.filename)
-    return {"saved": saved, "skipped": skipped, "stats": stats()}
+    ensure_dirs()
+    saved, skipped, errors = [], [], []
+    for file in files:
+        name = file.filename or "image"
+        try:
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise ValueError("Image exceeds 20 MB.")
+            saved.append(await run_in_threadpool(insert_image, name, data))
+        except ValueError as exc:
+            skipped.append(name)
+            errors.append({"file": name, "message": str(exc)})
+        except OSError:
+            logging.getLogger(__name__).exception("Could not store a dataset image")
+            skipped.append(name)
+            errors.append({"file": name, "message": "The backend could not write the image. Check available storage."})
+    return {"saved": saved, "skipped": skipped, "errors": errors, "stats": stats()}
 
 @app.delete("/api/dataset/images/{name}")
 def ds_delete(name: str):
@@ -271,6 +301,7 @@ def ds_get_ann(name: str):
 def ds_set_ann(name: str, payload: dict):
     try: n = save_annotation(name, payload.get("boxes", []))
     except FileNotFoundError: raise HTTPException(404, "Image not found.")
+    except (TypeError, KeyError, ValueError) as exc: raise HTTPException(400, "Invalid annotation boxes.") from exc
     return {"saved": n, "stats": stats()}
 
 @app.post("/api/dataset/split")

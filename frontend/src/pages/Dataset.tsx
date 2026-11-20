@@ -14,12 +14,13 @@ export default function Dataset() {
   const [drawClass, setDrawClass] = useState(0)
   const [trainPct, setTrainPct] = useState(80)
   const [yaml, setYaml] = useState('')
+  const [uploadErrors, setUploadErrors] = useState<{ file: string; message: string }[]>([])
   const [busy, setBusy] = useState(false)
   const [catalog, setCatalog] = useState<BuiltinDataset[]>([])
   const [dsBusy, setDsBusy] = useState('')
 
   const refreshCatalog = async () => {
-    try { setCatalog(await api.dsCatalog()) } catch { /* Keep the last catalog if the request fails. */ }
+    try { setCatalog(await api.dsCatalog()) } catch { /* backend offline — banner in Layout explains */ }
   }
   useEffect(() => { refreshCatalog() }, [])
   // Poll only while a download is in progress.
@@ -48,8 +49,14 @@ export default function Dataset() {
   const upload = async (files: FileList | null) => {
     if (!files?.length) return
     setBusy(true)
-    try { const r = await api.dsUpload(files); await refresh(); toast(`Uploaded ${r.saved.length} image(s)${r.skipped.length ? ` — ${r.skipped.length} skipped (JPG/PNG only)` : ''}`) }
-    catch (e: any) { toast(e.message, 'err') } finally { setBusy(false) }
+    setUploadErrors([])
+    try {
+      const result = await api.dsUpload(files)
+      setUploadErrors(result.errors ?? result.skipped.map(file => ({ file, message: 'The backend skipped this file.' })))
+      toast(`Uploaded ${result.saved.length} image(s)`)
+      await refresh()
+    } catch (e: any) { toast(e.message, 'err') }
+    finally { setBusy(false) }
   }
   const selectImage = async (im: any) => {
     setSelected(im)
@@ -58,11 +65,18 @@ export default function Dataset() {
   const addClass = async () => {
     if (!newClass.trim()) return
     const next = [...classes, newClass.trim()]
-    await api.dsSetClasses(next); setClasses(next); setNewClass(''); toast(`Class “${newClass.trim()}” added`)
+    try {
+      await api.dsSetClasses(next)
+      setClasses(next); setNewClass(''); toast(`Class “${newClass.trim()}” added`)
+    } catch (e: any) { toast(e.message, 'err') }
   }
   const saveBoxes = async () => {
     if (!selected) return
-    await api.dsSaveAnnotations(selected.name, ann.boxes); await refresh(); toast(`Saved ${ann.boxes.length} annotation(s) for ${selected.name}`)
+    try {
+      await api.dsSaveAnnotations(selected.name, ann.boxes)
+      toast(`Saved ${ann.boxes.length} annotation(s) for ${selected.name}`)
+      await refresh()
+    } catch (e: any) { toast(e.message, 'err') }
   }
   const split = async () => {
     setBusy(true)
@@ -122,18 +136,24 @@ export default function Dataset() {
           {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {[['Total images', stats?.total_images ?? 0], ['Annotations', stats?.total_annotations ?? 0], ['Classes', stats?.num_classes ?? 0], ['Train images', stats?.train_images ?? 0], ['Val images', stats?.val_images ?? 0]].map(([l, v]) => (
           <div key={l as string} className="card"><p className="text-xs uppercase tracking-wider text-slate-400">{l}</p><p className="mt-1 text-2xl font-bold">{v}</p></div>
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         <div className="card">
           <h2 className="font-semibold">A. Image collection</h2>
           <label className="mt-3 flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-white/15 px-4 py-6 text-center text-sm hover:border-sky-500/50">
-            <ImagePlus size={22} className="text-sky-400" /><span className="mt-1">Upload JPG / PNG images</span>
-            <input type="file" accept="image/jpeg,image/png" multiple className="hidden" onChange={e => upload(e.target.files)} />
+            <ImagePlus size={22} className="text-sky-400" /><span className="mt-1">Upload JPG, PNG, WebP, GIF, BMP or AVIF</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" multiple disabled={busy} className="hidden" onChange={e => {
+              void upload(e.currentTarget.files)
+              e.currentTarget.value = ''
+            }} />
           </label>
+          {uploadErrors.length > 0 && <ul role="alert" className="mt-2 space-y-1 text-sm text-red-300">
+            {uploadErrors.map(({ file, message }, index) => <li key={index}><b>{file}</b> · {message}</li>)}
+          </ul>}
           <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
             {images.map(im => (
               <button key={im.name} onClick={() => selectImage(im)} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm ${selected?.name === im.name ? 'border-sky-500/50 bg-sky-500/10' : 'border-white/10 bg-white/[0.03]'}`}>
@@ -147,7 +167,7 @@ export default function Dataset() {
           <div className="mt-2 flex flex-wrap gap-2">{classes.map((c, i) => <span key={i} className="chip">{i}: {c}</span>)}{!classes.length && <span className="text-sm text-slate-400">No classes defined yet.</span>}</div>
           <div className="mt-2 flex gap-2"><input className="input" placeholder="New class name, e.g. helmet" value={newClass} onChange={e => setNewClass(e.target.value)} onKeyDown={e => e.key === 'Enter' && addClass()} /><button className="btn-primary" onClick={addClass}><Plus size={15} /> Add</button></div>
         </div>
-        <div className="card lg:col-span-2">
+        <div className="card xl:col-span-2">
           <h2 className="font-semibold">B. Annotation — LabelImg-compatible (YOLO txt)</h2>
           {!selected ? <p className="mt-3 text-sm text-slate-400">Select an image on the left, then drag on it to draw a bounding box. Boxes are saved as YOLO text labels (class, centre-x, centre-y, width, height — normalised).</p> : (
             <>

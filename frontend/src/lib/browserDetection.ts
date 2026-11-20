@@ -19,6 +19,27 @@ export type BrowserModel = keyof typeof models
 type Progress = (loaded: number, total: number) => void
 const sessions = new Map<BrowserModel, Promise<ort.InferenceSession>>()
 
+export type ModelState = 'not-downloaded' | 'downloading' | 'ready' | 'error'
+let modelState: ModelState = 'not-downloaded'
+let modelError = ''
+
+export function getBrowserModelState(): { state: ModelState; error: string } {
+  return { state: modelState, error: modelError }
+}
+
+type BrowserModelListener = (s: { state: ModelState; error: string }) => void
+const browserModelListeners = new Set<BrowserModelListener>()
+function notifyBrowserModelState() {
+  const s = getBrowserModelState()
+  browserModelListeners.forEach(cb => { try { cb(s) } catch { /* listener errors must not break detection */ } })
+}
+
+/** Subscribe to browser-model state changes. Returns an unsubscribe function. */
+export function subscribeBrowserModelState(cb: BrowserModelListener): () => void {
+  browserModelListeners.add(cb)
+  return () => { browserModelListeners.delete(cb) }
+}
+
 async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Promise<ArrayBuffer> {
   // Remote COCO weights use Cache Storage. Bundled models use the
   // server's HTTP caching policy so a deployment can replace the file.
@@ -55,15 +76,32 @@ async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Prom
   return buf.buffer
 }
 
-function ensureBrowserModel(model: BrowserModel, onProgress?: Progress): Promise<ort.InferenceSession> {
+export function ensureBrowserModel(onProgress?: Progress, model: BrowserModel = 'coco'): Promise<ort.InferenceSession> {
   const existing = sessions.get(model)
   if (existing) return existing
 
+  if (model === 'coco') {
+    modelState = 'downloading'
+    modelError = ''
+    notifyBrowserModelState()
+  }
   ort.env.wasm.wasmPaths = { mjs: wasmModuleUrl, wasm: wasmBinaryUrl }
   ort.env.wasm.numThreads = 1
   const session = fetchModelBytes(model, onProgress)
     .then(bytes => ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }))
+    .then(session => {
+      if (model === 'coco') {
+        modelState = 'ready'
+        notifyBrowserModelState()
+      }
+      return session
+    })
     .catch(error => {
+      if (model === 'coco') {
+        modelState = 'error'
+        modelError = error instanceof Error ? error.message : String(error)
+        notifyBrowserModelState()
+      }
       sessions.delete(model)
       throw error
     })
@@ -93,6 +131,7 @@ export interface BrowserDetectResult {
   inference_ms: number
   fps: number
   annotatedDataUrl: string
+  engine?: string
   source: 'browser'
 }
 
@@ -134,7 +173,7 @@ export async function detectInBrowser(
   onProgress?: Progress,
   model: BrowserModel = 'coco',
 ): Promise<BrowserDetectResult> {
-  const session = await ensureBrowserModel(model, onProgress)
+  const session = await ensureBrowserModel(onProgress, model)
   const { size, labels } = models[model]
   const { conf, iou } = getLocalSettings()
   const { canvas, scale, padX, padY } = letterboxToCanvas(source, w, h, size)
@@ -150,6 +189,7 @@ export async function detectInBrowser(
   return {
     ...summarise(dets, inferenceMs),
     annotatedDataUrl: annotate(source, w, h, dets),
+    engine: ({ broad: 'YOLOE · Objects365', package: 'Package detector', coco: 'YOLOv8n · COCO' })[model],
     source: 'browser',
   }
 }
