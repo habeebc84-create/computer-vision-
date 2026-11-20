@@ -151,6 +151,11 @@ export const api = {
   deleteHistory: (id: number) => req(`/api/history/${id}`, { method: 'DELETE' }),
   dsStats: () => req<any>('/api/dataset/stats'),
   dsImages: () => req<any[]>('/api/dataset/images'),
+  dsImportCoco: async (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req<{ saved: string[]; skipped: string[]; classes: number }>('/api/dataset/import-coco', { method: 'POST', body: fd })
+  },
   dsUpload: async (files: FileList | File[]) => {
     const fd = new FormData(); Array.from(files).forEach(f => fd.append('files', f))
     return req<{ saved: string[]; skipped: string[]; errors?: { file: string; message: string }[] }>('/api/dataset/upload', { method: 'POST', body: fd })

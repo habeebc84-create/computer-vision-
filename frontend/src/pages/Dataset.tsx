@@ -15,6 +15,7 @@ export default function Dataset() {
   const [trainPct, setTrainPct] = useState(80)
   const [yaml, setYaml] = useState('')
   const [uploadErrors, setUploadErrors] = useState<{ file: string; message: string }[]>([])
+  const [importing, setImporting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [catalog, setCatalog] = useState<BuiltinDataset[]>([])
   const [dsBusy, setDsBusy] = useState('')
@@ -57,6 +58,16 @@ export default function Dataset() {
       await refresh()
     } catch (e: any) { toast(e.message, 'err') }
     finally { setBusy(false) }
+  }
+  const importArchive = async (file?: File) => {
+    if (!file || importing) return
+    setImporting(true)
+    try {
+      const result = await api.dsImportCoco(file)
+      toast(`Imported ${result.saved.length} images and ${result.classes} categories${result.skipped.length ? ` · ${result.skipped.length} images skipped` : ''}`)
+      await refresh()
+    } catch (error) { toast(error instanceof Error ? error.message : String(error), 'err') }
+    finally { setImporting(false) }
   }
   const selectImage = async (im: any) => {
     setSelected(im)
@@ -134,6 +145,18 @@ export default function Dataset() {
             </div>
           ))}
           {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
+        </div>
+      </div>
+      <div className="card">
+        <h2 className="font-semibold">Objects365 and custom datasets</h2>
+        <p className="mt-2 text-sm text-slate-400">Import a ZIP with images and one COCO-format annotation JSON file. Use a subset up to 100 MB for Objects365.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a className="btn-ghost" href="https://www.objects365.org/download.html" target="_blank" rel="noreferrer">Get Objects365</a>
+          <label className="btn-primary cursor-pointer focus-within:ring-2">
+            {importing ? 'Importing…' : 'Import annotated ZIP'}
+            <input type="file" accept=".zip,application/zip" aria-label="Import annotated ZIP" disabled={importing}
+              className="sr-only" onChange={event => { void importArchive(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
+          </label>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
