@@ -58,6 +58,7 @@ export default function ImageDetect() {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState('')
   const [result, setResult] = useState<DetectResult | null>(null)
+  const [scanSmallObjects, setScanSmallObjects] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [chosenMode, setMode] = useState<Mode | null>(null)
@@ -79,7 +80,7 @@ export default function ImageDetect() {
   }, [])
 
   useEffect(() => {
-    if (!file) return
+    if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file)
     setPreview(url)
     return () => URL.revokeObjectURL(url)
@@ -87,6 +88,7 @@ export default function ImageDetect() {
 
   const pick = (f: File | undefined) => {
     if (!f || busy) return
+    setFile(null); setResult(null); setSource(null)
     // Phones often save HEIC/HEIF, which browsers (except Safari) cannot
     // decode — say so plainly instead of the generic format error.
     if (/heic|heif/i.test(f.type) || /\.hei[cf]$/i.test(f.name)) {
@@ -108,7 +110,7 @@ export default function ImageDetect() {
       const runDetector = async () => {
         if (mode === 'broad' || mode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
-          return { result: await detectImageFileInBrowser(file, progress, mode), source: 'browser' as const }
+          return { result: await detectImageFileInBrowser(file, progress, mode, mode === 'broad' && scanSmallObjects), source: 'browser' as const }
         }
         if (mode === 'coco' && customSelected) {
           if (!(await isBackendOnline())) throw new Error(`Start the Python backend to use ${backendModel}.`)
@@ -152,6 +154,13 @@ export default function ImageDetect() {
           ))}
         </div>
         {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
+        {mode === 'broad' && (
+          <label className="mb-3 flex items-start gap-2 text-sm text-slate-300">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-400" checked={scanSmallObjects}
+              disabled={busy} onChange={event => setScanSmallObjects(event.target.checked)} />
+            <span>Look for small objects <span className="text-slate-400">(slower on large photos)</span></span>
+          </label>
+        )}
         {mode === 'package' && <p className="my-3 text-sm text-slate-400">Find packages using a detector fine-tuned on labeled package photos.</p>}
         {mode === 'world' && (
           <div className="mt-3">
@@ -172,7 +181,7 @@ export default function ImageDetect() {
           <ImagePlus size={28} className="text-sky-400" />
           <span className="mt-2 font-semibold">Drop an image here, or click to browse</span>
           <span className="text-xs text-slate-400">JPG / PNG / WebP / GIF / BMP / AVIF · up to 20 MB</span>
-          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="hidden" disabled={busy} onChange={e => pick(e.target.files?.[0])} />
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="hidden" disabled={busy} onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
         </label>
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p role="status" className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}%</p>}
@@ -205,6 +214,9 @@ export default function ImageDetect() {
           {result ? (
             <div className="mt-3 space-y-2 text-sm">
               <p className="flex justify-between"><span className="text-slate-400">Total objects</span><b>{result.count}</b></p>
+              {result.count === 0 && mode === 'broad' && !scanSmallObjects && (
+                <p className="text-slate-300">No objects met the confidence threshold. For small or distant objects, try enabling “Look for small objects”.</p>
+              )}
               {(result as any).prompts && <p className="flex justify-between"><span className="text-slate-400">Looking for</span><b className="text-right">{(result as any).prompts.join(', ')}</b></p>}
               <p className="flex justify-between"><span className="text-slate-400">Unique classes</span><b>{result.unique_classes.join(', ') || '—'}</b></p>
               <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{(result.avg_confidence * 100).toFixed(1)}%</b></p>

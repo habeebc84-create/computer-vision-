@@ -124,10 +124,14 @@ export function parseDetections(
       bbox: [Math.round(x1 * 10) / 10, Math.round(y1 * 10) / 10, Math.round(x2 * 10) / 10, Math.round(y2 * 10) / 10],
     })
   }
+  return suppressDuplicates(cands, iouThreshold, duplicateBoxIou)
+}
+
+export function suppressDuplicates(candidates: Detection[], iouThreshold: number, duplicateBoxIou?: number): Detection[] {
   // Class-aware NMS, highest confidence first.
-  cands.sort((a, b) => b.confidence - a.confidence)
+  const sorted = [...candidates].sort((a, b) => b.confidence - a.confidence)
   const kept: Detection[] = []
-  for (const d of cands) {
+  for (const d of sorted) {
     // Broad vocabularies can assign near-identical boxes competing labels
     // such as sneaker and boot. Keep the highest confidence label for those.
     const duplicate = kept.some(k => {

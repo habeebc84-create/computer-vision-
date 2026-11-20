@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web/wasm'
 import wasmModuleUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url'
 import wasmBinaryUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url'
-import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetections, summarise, Detection, getLocalSettings } from './yoloPost'
+import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetections, suppressDuplicates, summarise, Detection, getLocalSettings } from './yoloPost'
 
 import { OBJECTS365_NAMES } from './objects365'
 
@@ -109,7 +109,7 @@ export function ensureBrowserModel(onProgress?: Progress, model: BrowserModel = 
   return session
 }
 
-function letterboxToCanvas(source: CanvasImageSource, w: number, h: number, size: number) {
+function letterboxToCanvas(source: CanvasImageSource, w: number, h: number, size: number, x = 0, y = 0) {
   const { scale, padX, padY } = letterboxParams(w, h, size)
   const canvas = document.createElement('canvas')
   canvas.width = size
@@ -119,7 +119,7 @@ function letterboxToCanvas(source: CanvasImageSource, w: number, h: number, size
   // so the browser path sees the same input as the backend.
   ctx.fillStyle = '#727272'
   ctx.fillRect(0, 0, size, size)
-  ctx.drawImage(source, padX, padY, Math.round(w * scale), Math.round(h * scale))
+  ctx.drawImage(source, x, y, w, h, padX, padY, Math.round(w * scale), Math.round(h * scale))
   return { canvas, scale, padX, padY }
 }
 
@@ -172,20 +172,51 @@ export async function detectInBrowser(
   h: number,
   onProgress?: Progress,
   model: BrowserModel = 'coco',
+  scanSmallObjects = false,
 ): Promise<BrowserDetectResult> {
   const session = await ensureBrowserModel(onProgress, model)
   const { size, labels } = models[model]
   const { conf, iou } = getLocalSettings()
-  const { canvas, scale, padX, padY } = letterboxToCanvas(source, w, h, size)
-  const rgba = canvas.getContext('2d')!.getImageData(0, 0, size, size).data
-  const tensor = new ort.Tensor('float32', rgbaToTensor(rgba, size), [1, 3, size, size])
-  const t0 = performance.now()
-  const feeds: Record<string, ort.Tensor> = {}
-  feeds[session.inputNames[0]] = tensor
-  const out = await session.run(feeds)
-  const output = out[session.outputNames[0]]
-  const inferenceMs = performance.now() - t0
-  const dets = parseDetections(output.data as Float32Array, w, h, scale, padX, padY, conf, iou, labels, output.dims, model === 'broad' ? 0.9 : undefined)
+  const duplicateBoxIou = model === 'broad' ? 0.9 : undefined
+  let inferenceMs = 0
+  const predict = async (width: number, height: number, x = 0, y = 0) => {
+    const { canvas, scale, padX, padY } = letterboxToCanvas(source, width, height, size, x, y)
+    const rgba = canvas.getContext('2d')!.getImageData(0, 0, size, size).data
+    const tensor = new ort.Tensor('float32', rgbaToTensor(rgba, size), [1, 3, size, size])
+    const start = performance.now()
+    try {
+      const outputs = await session.run({ [session.inputNames[0]]: tensor })
+      try {
+        const output = outputs[session.outputNames[0]]
+        inferenceMs += performance.now() - start
+        return parseDetections(output.data as Float32Array, width, height, scale, padX, padY, conf, iou, labels, output.dims, duplicateBoxIou)
+      } finally {
+        Object.values(outputs).forEach(output => output.dispose())
+      }
+    } finally {
+      tensor.dispose()
+    }
+  }
+  let dets = await predict(w, h)
+  if (scanSmallObjects && Math.max(w, h) > size) {
+    // Overlap adjacent crops so targets near the middle of the photo are
+    // visible in full in at least one crop.
+    const cropWidth = Math.ceil(w * 0.6)
+    const cropHeight = Math.ceil(h * 0.6)
+    for (const y of new Set([0, h - cropHeight])) {
+      for (const x of new Set([0, w - cropWidth])) {
+        const matches = await predict(cropWidth, cropHeight, x, y)
+        for (const match of matches) {
+          const [left, top, right, bottom] = match.bbox
+          if ((x > 0 && left <= 1) || (y > 0 && top <= 1) ||
+              (x + cropWidth < w && right >= cropWidth - 1) ||
+              (y + cropHeight < h && bottom >= cropHeight - 1)) continue
+          dets.push({ ...match, bbox: [left + x, top + y, right + x, bottom + y] })
+        }
+      }
+    }
+    dets = suppressDuplicates(dets, iou, duplicateBoxIou)
+  }
   return {
     ...summarise(dets, inferenceMs),
     annotatedDataUrl: annotate(source, w, h, dets),
@@ -199,10 +230,13 @@ export async function detectImageFileInBrowser(
   file: File,
   onProgress?: Progress,
   model: BrowserModel = 'coco',
+  scanSmallObjects = false,
 ): Promise<BrowserDetectResult> {
-  const bmp = await createImageBitmap(file)
+  const bmp = await createImageBitmap(file).catch(() => {
+    throw new Error("Could not read this image. Upload a valid image or export it as JPG or PNG and try again.")
+  })
   try {
-    return await detectInBrowser(bmp, bmp.width, bmp.height, onProgress, model)
+    return await detectInBrowser(bmp, bmp.width, bmp.height, onProgress, model, scanSmallObjects)
   } finally {
     bmp.close()
   }
