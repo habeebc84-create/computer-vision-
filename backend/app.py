@@ -99,9 +99,7 @@ def _summary(dets, ms):
 
 @app.post("/api/detect/image")
 async def detect_image(file: UploadFile = File(...)):
-    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
-        raise HTTPException(400, "Upload a JPG or PNG image.")
-    data = await file.read()
+    data = await file.read(20*1024*1024 + 1)
     if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
     try: img = decode_image(data)
     except ValueError as e: raise HTTPException(400, str(e))
@@ -156,9 +154,7 @@ async def detect_open_vocab_image(file: UploadFile = File(...), classes: str = F
     in `classes`. Real inference only — a missing/unreachable world model is
     a clear 503, never invented boxes."""
     prompts = _parse_classes(classes)
-    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
-        raise HTTPException(400, "Upload a JPG or PNG image.")
-    data = await file.read()
+    data = await file.read(20*1024*1024 + 1)
     if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
     try: img = decode_image(data)
     except ValueError as e: raise HTTPException(400, str(e))
@@ -193,14 +189,23 @@ async def detect_open_vocab_frame(frame: UploadFile = File(...), classes: str = 
     return out
 
 @app.post("/api/detect/frame/save")
-async def save_frame(frame: UploadFile = File(...)):
+async def save_frame(frame: UploadFile = File(...), classes: str | None = Form(None)):
+    prompts = _parse_classes(classes) if classes is not None else None
     data = await frame.read()
-    img = decode_image(data)
-    dets, ms = manager.detect_array(img)
-    name = f"live_{int(time.time())}.jpg"
+    try: img = decode_image(data)
+    except ValueError as e: raise HTTPException(400, str(e))
+    try:
+        if prompts is None:
+            dets, ms = manager.detect_array(img)
+            model_path = manager.model_path
+        else:
+            dets, ms = world_manager.detect_array(img, prompts)
+            model_path = world_manager.model_path
+    except Exception as e: raise HTTPException(503, f"Model error: {e}")
+    name = f"live_{uuid.uuid4().hex}.jpg"
     (OUT_IMG / name).write_bytes(encode_jpeg(manager.annotate(img, dets)))
     rid = analytics.record("live", dets, fps=1000/max(ms, .01), inference_ms=ms,
-                           output_path=f"outputs/images/{name}", model=manager.model_path or "")
+                           output_path=f"outputs/images/{name}", model=model_path or "")
     out = _summary(dets, ms); out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}"})
     return out
 

@@ -123,10 +123,9 @@ frontend itself on the same origin, and `VITE_API_URL` stays empty.
 ## In-browser detection (no backend)
 
 **Update: image and live-webcam detection now work even when the backend is
-offline.** When the frontend cannot reach the backend, the Image and Live
-pages automatically fall back to running real YOLOv8 inference inside the
-browser — the page shows a violet chip, "Running in your browser — no backend
-connected", so a browser result is never passed off as a backend result.
+offline.** When the frontend cannot reach the backend or the detection API
+is unavailable, the Image and Live pages automatically fall back to running real YOLOv8 inference inside the
+browser — the page shows a violet chip, "Running in your browser", so a browser result is never passed off as a backend result.
 
 How it works:
 
@@ -258,14 +257,14 @@ npm run dev
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
 
-## Open-vocabulary detection (recognise any object)
+## Open-vocabulary detection (search by object name)
 
 The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
-"person", "car", "dog" and 77 others. If you need **any** object, use
+"person", "car", "dog" and 77 others. To look for objects beyond COCO, use
 **YOLO-World** (`yolov8s-worldv2.pt`, Ultralytics): it is an
 open-vocabulary detector, so you type the object names in plain English and
-it finds them — "red bus", "traffic light", "laptop", "cricket bat", anything
-you can name. No training and no dataset are needed for this.
+it searches for them — for example, "red bus", "traffic light", "laptop",
+or "cricket bat". This mode works without a training dataset.
 
 How to use it:
 
@@ -299,12 +298,15 @@ Notes and limits (honest):
 
 - **Overview Dashboard** — totals, class distribution and activity from
   recorded detections only. Empty states until the first real detection.
-- **Live Detection** — pick a camera, Start webcam, allow browser camera
-  access. Frames are captured at ~6 fps and POSTed to `/api/detect/frame`;
+- **Live Detection** — choose **Enable camera names** or **Start webcam**
+  and allow browser camera access. The camera list refreshes after permission,
+  when the window regains focus, and when the browser reports a device change.
+  Stop the stream before switching cameras. Frames are sampled up to ~6 fps;
   boxes/labels/confidence are drawn on a canvas overlay with measured FPS
   and inference ms. Save snapshot stores that frame in history.
-- **Image Detection** — upload JPG/PNG, Run detection, download the
-  annotated image.
+- **Image Detection** — upload JPG, PNG, WebP, GIF, BMP or AVIF (up to 20 MB),
+  run detection, and download the annotated image. Animated images use the first
+  frame on the backend. Convert HEIC photos to JPEG before uploading.
 - **Dataset Preparation** — upload images, add classes, click an image and
   drag to draw boxes, Save annotations, set the train % and Split — this
   writes `dataset/data.yaml` and the `images/{train,val}` +
@@ -374,7 +376,7 @@ into `dataset/labels/all/` and the matching images into
 - **Video processing slow** — also CPU-bound; progress is real frame count,
   so a long video takes a while. Short clips first.
 - **Port 8000 in use** — stop the other process, or edit the port in `run.py`.
-- **"Could not decode image"** — upload a valid JPG/PNG under 20 MB.
+- **"Could not decode image"** — upload a valid JPG, PNG, WebP, GIF, BMP or AVIF under 20 MB.
 - **Charts empty** — by design: analytics only show recorded detections.
   Run a detection first.
 
