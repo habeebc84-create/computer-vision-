@@ -3,7 +3,7 @@ export interface DetectResult { detections: Detection[]; count: number; unique_c
 export interface ModelStatus { loaded: boolean; model_path: string; device: string; classes: number; class_names: string[]; loaded_at: string | null; error: string | null; conf: number; iou: number; imgsz: number }
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
-export interface BuiltinDataset { id: string; name: string; description: string; images: number; classes: number; size_mb: number; url: string; license: string; status: string; imported_images?: number; imported_labels?: number; progress?: number; error?: string | null }
+export interface BuiltinDataset { id: string; name: string; description: string; images: number; classes: number; size_mb: number | null; url: string; license: string; status: string; format?: string; external_url?: string; note?: string; imported_images?: number; imported_labels?: number; progress?: number; error?: string | null }
 export interface DatasetSplit {
   train: number
   val: number

@@ -370,6 +370,9 @@ def ds_download(ds_id: str, force: bool = False):
         return builtin_datasets.start_download(ds_id, force=force)
     except KeyError:
         raise HTTPException(404, f"Unknown dataset: {ds_id}")
+    except ValueError as e:
+        # e.g. an external-only dataset (too large / registration-gated).
+        raise HTTPException(400, str(e))
 
 @app.get("/api/datasets/{ds_id}/status")
 def ds_status(ds_id: str):
