@@ -25,11 +25,17 @@ def import_coco(archive):
         if not images or not categories or not all(categories.values()):
             raise ValueError("The dataset must contain images and named categories.")
 
-        existing = get_classes()
-        classes = list(dict.fromkeys([*existing, *categories.values()]))
-        # Preserve existing indices even if older projects contain duplicate names.
-        classes = existing + [name for name in classes if name not in existing]
-        indices = {category: classes.index(name) for category, name in categories.items()}
+        classes = get_classes()
+        class_ids = {}
+        for i, name in enumerate(classes):
+            class_ids.setdefault(name.casefold(), i)
+        indices = {}
+        for category, name in categories.items():
+            key = name.casefold()
+            if key not in class_ids:
+                class_ids[key] = len(classes)
+                classes.append(name)
+            indices[category] = class_ids[key]
         labels = {image_id: [] for image_id in images}
         for annotation in doc["annotations"]:
             image = images[annotation["image_id"]]

@@ -4,6 +4,14 @@ export interface ModelStatus { loaded: boolean; model_path: string; device: stri
 export interface Summary { total_detections: number; total_records: number; images: number; videos: number; live: number; num_classes: number; avg_confidence: number; avg_fps: number; recent: HistoryRecord[] }
 export interface HistoryRecord { id: number; created_at: string; input_type: string; classes: string[]; object_count: number; avg_conf: number; fps: number; inference_ms: number; output_path: string; model: string }
 export interface BuiltinDataset { id: string; name: string; description: string; images: number; classes: number; size_mb: number; url: string; license: string; status: string; imported_images?: number; imported_labels?: number; progress?: number; error?: string | null }
+export interface DatasetSplit {
+  train: number
+  val: number
+  unannotated_images: string[]
+  duplicate_images: string[]
+  classes_without_boxes: string[]
+  classes_without_validation: string[]
+}
 export interface AvailableModel { id: string; path: string; kind: 'coco' | 'world' | 'trained'; name: string; classes: number | null; description: string; size_mb: number; downloaded: boolean; loaded?: boolean }
 
 /**
@@ -165,7 +173,7 @@ export const api = {
   dsSetClasses: (classes: string[]) => req('/api/dataset/classes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ classes }) }),
   dsAnnotations: (name: string) => req<any>(`/api/dataset/annotations/${encodeURIComponent(name)}`),
   dsSaveAnnotations: (name: string, boxes: any[]) => req(`/api/dataset/annotations/${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ boxes }) }),
-  dsSplit: (train_pct: number) => req<any>('/api/dataset/split', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ train_pct }) }),
+  dsSplit: (train_pct: number) => req<DatasetSplit>('/api/dataset/split', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ train_pct }) }),
   dsYaml: () => req<{ content: string }>('/api/dataset/data-yaml'),
   dsCatalog: () => req<BuiltinDataset[]>('/api/datasets'),
   dsDownload: (id: string, force = false) => req<any>(`/api/datasets/${encodeURIComponent(id)}/download${force ? '?force=true' : ''}`, { method: 'POST' }),

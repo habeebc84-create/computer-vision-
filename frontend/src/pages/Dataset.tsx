@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, ImagePlus, Plus, Split, Trash2, Upload } from 'lucide-react'
-import { api, BuiltinDataset, resolveUrl, toast } from '../lib/api'
+import { api, BuiltinDataset, DatasetSplit, resolveUrl, toast } from '../lib/api'
 
 interface Box { class_id: number; x_min: number; y_min: number; x_max: number; y_max: number }
 
@@ -14,6 +14,7 @@ export default function Dataset() {
   const [drawClass, setDrawClass] = useState(0)
   const [trainPct, setTrainPct] = useState(80)
   const [yaml, setYaml] = useState('')
+  const [splitReport, setSplitReport] = useState<DatasetSplit | null>(null)
   const [uploadErrors, setUploadErrors] = useState<{ file: string; message: string }[]>([])
   const [importing, setImporting] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -92,22 +93,28 @@ export default function Dataset() {
   }
   const split = async () => {
     setBusy(true)
+    setSplitReport(null)
+    setYaml('')
     try {
-      const r = await api.dsSplit(trainPct); await refresh()
+      const r = await api.dsSplit(trainPct)
+      setSplitReport(r)
+      await refresh()
       const y = await api.dsYaml().catch(() => null); if (y) setYaml(y.content)
-      toast(`Split done — ${r.train} train / ${r.val} val${r.warning ? '. ' + r.warning : ''}`)
+      toast(`Split done — ${r.train} train / ${r.val} validation`)
     } catch (e: any) { toast(e.message, 'err') } finally { setBusy(false) }
   }
   const onDown = (e: React.MouseEvent) => {
     const img = imgRef.current; if (!img || !classes.length) return
     const r = img.getBoundingClientRect()
-    const x = (e.clientX - r.left) / r.width * ann.width, y = (e.clientY - r.top) / r.height * ann.height
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * ann.width
+    const y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) * ann.height
     drawStart.current = { x, y }
   }
   const onMove = (e: React.MouseEvent) => {
     if (!drawStart.current || !imgRef.current) return
     const img = imgRef.current; const r = img.getBoundingClientRect()
-    const x = (e.clientX - r.left) / r.width * ann.width, y = (e.clientY - r.top) / r.height * ann.height
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * ann.width
+    const y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) * ann.height
     setDraft({ class_id: drawClass, x_min: Math.min(drawStart.current.x, x), y_min: Math.min(drawStart.current.y, y), x_max: Math.max(drawStart.current.x, x), y_max: Math.max(drawStart.current.y, y) })
   }
   const onUp = () => {
@@ -121,7 +128,7 @@ export default function Dataset() {
     <div className="space-y-4">
       <div className="card">
         <h2 className="font-semibold">Recommended datasets — one-click download</h2>
-        <p className="mt-1 text-sm text-slate-400">Objects365 and COCO samples with real images and bounding-box labels. Download one, then Split the dataset below and go to Module 2 — Training.</p>
+        <p className="mt-1 text-sm text-slate-400">Download labeled photos from Open Images, Objects365, or COCO. Split the dataset below, train a model, then load the best weights from Model Training.</p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {catalog.map(d => (
             <div key={d.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -134,7 +141,7 @@ export default function Dataset() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {d.status === 'imported'
                   ? <><span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30">Imported ✓ {d.imported_images} images · {d.imported_labels} labels</span>
-                    {d.id !== 'objects365-sample' && <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button>}</>
+                    {['coco8', 'coco128'].includes(d.id) && <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button>}</>
                   : d.status === 'downloading'
                     ? <span className="chip">Downloading… {d.progress ?? 0}%</span>
                     : d.status === 'failed'
@@ -145,7 +152,7 @@ export default function Dataset() {
               </div>
             </div>
           ))}
-          {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
+          {!catalog.length && <p className="text-sm text-slate-400">Connect the Python backend to import a dataset. Available samples include 60 pen and phone photos from Open Images and 12 comb and phone-case photos from Wikimedia Commons.</p>}
         </div>
       </div>
       <section className="card" aria-labelledby="objects365-heading">
@@ -241,8 +248,20 @@ export default function Dataset() {
             <button className="btn-primary" onClick={split} disabled={busy}><Split size={15} /> Split &amp; generate data.yaml</button>
             <a className="btn-ghost" href={resolveUrl('/api/dataset/export')}><Download size={15} /> Export dataset (.zip)</a>
           </div>
+          <p className="mt-2 text-xs text-slate-400">Save boxes before splitting. Save an empty annotation only for a confirmed background image. Split again after editing the dataset.</p>
+          {splitReport && (
+            <div className="mt-3 text-sm text-slate-300" role="status">
+              <p>{splitReport.train} training images · {splitReport.val} validation images</p>
+              <ul className="mt-1 list-inside list-disc">
+                {!!splitReport.unannotated_images?.length && <li>{splitReport.unannotated_images.length} unreviewed images excluded.</li>}
+                {!!splitReport.duplicate_images?.length && <li>{splitReport.duplicate_images.length} duplicate images excluded.</li>}
+                {!!splitReport.classes_without_boxes?.length && <li>Classes with no boxes: {splitReport.classes_without_boxes.join(', ')}.</li>}
+                {!!splitReport.classes_without_validation?.length && <li>Classes without validation examples: {splitReport.classes_without_validation.join(', ')}.</li>}
+              </ul>
+            </div>
+          )}
           {yaml && <pre className="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-emerald-300">{yaml}</pre>}
-          {stats?.per_class && <div className="mt-4"><h3 className="text-sm font-semibold">E. Images per class</h3><div className="mt-2 flex flex-wrap gap-2">{Object.entries(stats.per_class).map(([k, v]) => <span key={k} className="chip">{k}: {String(v)} annotation(s)</span>)}</div></div>}
+          {stats?.per_class && <div className="mt-4"><h3 className="text-sm font-semibold">E. Annotations per class</h3><div className="mt-2 flex flex-wrap gap-2">{Object.entries(stats.per_class).map(([k, v]) => <span key={k} className="chip">{k}: {String(v)} annotation(s)</span>)}</div></div>}
         </div>
       </div>
     </div>

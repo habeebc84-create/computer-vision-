@@ -4,6 +4,7 @@ Run:  python run.py   ->  http://localhost:8000
 """
 import json, logging, shutil, sqlite3, time, uuid
 from pathlib import Path
+from threading import Lock
 from zipfile import BadZipFile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -26,6 +27,7 @@ from image_processing import decode_image, encode_jpeg
 import analytics, report_generator
 
 BASE = Path(__file__).resolve().parent.parent
+_split_and_training_lock = Lock()
 OUT_IMG = BASE / "outputs" / "images"; OUT_VID = BASE / "outputs" / "videos"
 OUT_REP = BASE / "outputs" / "reports"; UP = BASE / "uploads"
 # Defensive: a fresh clone has none of these directories (git-ignored/empty),
@@ -322,7 +324,8 @@ def ds_classes(): return {"classes": get_classes()}
 
 @app.post("/api/dataset/classes")
 def ds_set_classes(payload: dict):
-    return {"classes": set_classes(payload.get("classes", []))}
+    try: return {"classes": set_classes(payload.get("classes", []))}
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
 @app.get("/api/dataset/annotations/{name}")
 def ds_get_ann(name: str):
@@ -333,13 +336,17 @@ def ds_get_ann(name: str):
 def ds_set_ann(name: str, payload: dict):
     try: n = save_annotation(name, payload.get("boxes", []))
     except FileNotFoundError: raise HTTPException(404, "Image not found.")
-    except (TypeError, KeyError, ValueError) as exc: raise HTTPException(400, "Invalid annotation boxes.") from exc
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+    except (TypeError, KeyError) as exc: raise HTTPException(400, "Invalid annotation boxes.") from exc
     return {"saved": n, "stats": stats()}
 
 @app.post("/api/dataset/split")
 def ds_split(payload: dict):
-    try: return split_dataset(float(payload.get("train_pct", 80)))
-    except ValueError as e: raise HTTPException(400, str(e))
+    with _split_and_training_lock:
+        if train_job.status == "running":
+            raise HTTPException(409, "Wait for training to finish before rebuilding the dataset split.")
+        try: return split_dataset(float(payload.get("train_pct", 80)))
+        except (TypeError, ValueError) as e: raise HTTPException(400, str(e)) from e
 
 @app.get("/api/dataset/data-yaml")
 def ds_yaml():
@@ -377,8 +384,9 @@ def tr_start(payload: dict):
     cfg = {"model": payload.get("model", "yolov8n.pt"), "epochs": int(payload.get("epochs", 10)),
            "imgsz": int(payload.get("imgsz", 640)), "batch": int(payload.get("batch", 8)),
            "device": payload.get("device", "cpu")}
-    try: return train_job.start(cfg)
-    except (FileNotFoundError, RuntimeError) as e: raise HTTPException(400, str(e))
+    with _split_and_training_lock:
+        try: return train_job.start(cfg)
+        except (FileNotFoundError, RuntimeError, ValueError) as e: raise HTTPException(400, str(e)) from e
 
 @app.get("/api/training/status")
 def tr_status(): return train_job.snapshot()

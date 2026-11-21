@@ -5,6 +5,8 @@ import csv, shutil, threading, time
 from uuid import uuid4
 from pathlib import Path
 
+from dataset_manager import require_current_split
+
 BASE = Path(__file__).resolve().parent.parent
 
 class TrainingJob:
@@ -42,9 +44,7 @@ class TrainingJob:
     def start(self, config):
         if self.status == "running":
             raise RuntimeError("Training is already running.")
-        data_yaml = BASE / "dataset" / "data.yaml"
-        if not data_yaml.exists():
-            raise FileNotFoundError("dataset/data.yaml not found — prepare and split a dataset in Module 1 first.")
+        require_current_split()
         self.config = config; self.total_epochs = int(config.get("epochs", 10))
         self.epoch = 0; self.metrics = {}; self.error = None; self.best_path = None
         self.logs = []; self.status = "running"; self.started_at = time.strftime("%Y-%m-%d %H:%M:%S")

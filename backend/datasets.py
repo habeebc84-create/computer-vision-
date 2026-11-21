@@ -2,6 +2,7 @@
 import json, shutil, threading, urllib.request, zipfile
 from pathlib import Path
 from objects365_sample import CATEGORIES, IMAGE_IDS, SAMPLE_ID, SAMPLE_SOURCE, import_objects365_sample
+import open_images_sample
 
 BASE = Path(__file__).resolve().parent.parent
 DL_DIR = BASE / "downloads"
@@ -24,7 +25,25 @@ COCO80 = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
           "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
           "hair drier", "toothbrush"]
 
+SAMPLE_IMPORTERS = {
+    SAMPLE_ID: import_objects365_sample,
+    open_images_sample.SAMPLE_ID: open_images_sample.import_open_images_sample,
+    open_images_sample.ACCESSORIES_ID: open_images_sample.import_accessories_sample,
+}
+
 CATALOG = [
+    {"id": open_images_sample.SAMPLE_ID,
+     "name": "Open Images · Pens and phones",
+     "description": "60 real photos with reviewed pen and cell-phone boxes, including small objects in everyday scenes.",
+     "images": len(open_images_sample.SAMPLE_ROWS), "classes": len(open_images_sample.CATEGORIES), "size_mb": 30,
+     "url": open_images_sample.SAMPLE_SOURCE,
+     "license": "Open Images annotations (CC BY 4.0) and per-image CC BY 2.0 attribution"},
+    {"id": open_images_sample.ACCESSORIES_ID,
+     "name": "Wikimedia Commons · Combs and phone cases",
+     "description": "12 photos with hand-labeled boxes for combs and phone cases.",
+     "images": len(open_images_sample.ACCESSORIES_ROWS), "classes": 2, "size_mb": 2,
+     "url": open_images_sample.ACCESSORIES_SOURCE,
+     "license": "Per-image Creative Commons attribution in the repository manifest"},
     {"id": SAMPLE_ID,
      "name": "Objects365 sample",
      "description": "10 real Objects365 photos with bounding boxes. Use this small sample to check import, annotation, and training.",
@@ -45,7 +64,8 @@ CATALOG = [
      "license": "COCO 2017, CC BY 4.0"},
 ]
 
-_lock = threading.Lock()
+_lock = threading.RLock()
+_import_lock = threading.Lock()
 _state = {}  # id -> {status, progress, imported_images, imported_labels, error}
 
 def _marker_path(ds_id):
@@ -95,23 +115,29 @@ def start_download(ds_id, force=False):
     d = next((c for c in CATALOG if c["id"] == ds_id), None)
     if not d:
         raise KeyError(ds_id)
-    cur = _load_state(ds_id)
-    if cur["status"] == "downloading":
-        return status(ds_id)
-    if cur["status"] == "imported" and (not force or ds_id == SAMPLE_ID):
-        return status(ds_id)
-    _set_state(ds_id, status="downloading", progress=0, error=None)
-    t = threading.Thread(target=_download_and_import, args=(d,), daemon=True)
-    t.start()
+    with _lock:
+        cur = _load_state(ds_id)
+        if cur["status"] == "downloading":
+            return status(ds_id)
+        if cur["status"] == "imported" and (not force or ds_id in SAMPLE_IMPORTERS):
+            return status(ds_id)
+        _set_state(ds_id, status="downloading", progress=0, error=None)
+        t = threading.Thread(target=_run_import, args=(d,), daemon=True)
+        t.start()
     return status(ds_id)
+
+def _run_import(dataset):
+    with _import_lock:
+        _download_and_import(dataset)
+
 
 def _download_and_import(d):
     ds_id, url = d["id"], d["url"]
     zip_path = DL_DIR / f"{ds_id}.zip"
     tmp_dir = DL_DIR / f"{ds_id}_extract"
     try:
-        if ds_id == SAMPLE_ID:
-            count = import_objects365_sample(lambda progress: _set_state(ds_id, progress=progress))
+        if ds_id in SAMPLE_IMPORTERS:
+            count = SAMPLE_IMPORTERS[ds_id](lambda progress: _set_state(ds_id, progress=progress))
             _marker_path(ds_id).write_text(json.dumps({"images": count, "labels": count, "source": url}))
             _set_state(ds_id, status="imported", progress=100, imported_images=count, imported_labels=count, error=None)
             return
@@ -149,8 +175,14 @@ def _download_and_import(d):
             raise ValueError("Zip contained no images.")
         # Append COCO classes without changing the meaning of existing project labels.
         classes = get_classes()
-        classes.extend(name for name in COCO80 if name not in classes)
-        coco_to_project = [classes.index(name) for name in COCO80]
+        class_ids = {}
+        for i, name in enumerate(classes):
+            class_ids.setdefault(name.casefold(), i)
+        for name in COCO80:
+            if name not in class_ids:
+                class_ids[name] = len(classes)
+                classes.append(name)
+        coco_to_project = [class_ids[name] for name in COCO80]
         set_classes(classes)
         n_img = n_lbl = 0
         for img in sorted(images):

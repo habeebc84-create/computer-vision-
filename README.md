@@ -238,6 +238,22 @@ For conversion outside the app, see the
 
 ## Built-in datasets (one-click download)
 
+To fine-tune for small everyday objects, import **Open Images · Pens and
+phones** (60 photos with original pen and cell-phone boxes from [Open
+Images](https://storage.googleapis.com/openimages/web/download_v7.html)) and
+**Wikimedia Commons · Combs and phone cases** (12 photos with hand-labeled boxes).
+The repository records the [Open Images photo credits](backend/data/open-images-pen-phone.json)
+and [Wikimedia Commons photo credits](backend/data/commons-combs-phone-cases.json).
+The samples are a starting point. For accuracy on your camera, add labeled photos at different
+distances, angles, and lighting, plus confirmed backgrounds.
+
+Save boxes before splitting. A saved empty annotation marks an intentional background.
+The split excludes unreviewed photos and exact duplicate files, and keeps examples of every
+labeled class in training. It reports classes with no validation coverage so you know which
+objects the metrics cover. Split again after changing the dataset.
+After training, select **Load as active model**, then use **Backend model**
+in Image or Live Detection. For uploaded videos, use **Backend · all frames**.
+
 **Objects365 sample** downloads ten real annotated images from the
 [public Objects365 sample mirror](https://huggingface.co/datasets/ohjoonhee/Objects365-10BBoxes-Filtered).
 Open Dataset and choose **Download & import** with the backend connected.
