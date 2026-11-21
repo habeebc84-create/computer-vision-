@@ -39,7 +39,7 @@ export default function Inference({ go }: { go: (p: PageId) => void }) {
           <li>Frames/images are sent to the FastAPI backend (this computer, port 8000).</li>
           <li>The loaded YOLOv8 model runs <code className="rounded bg-white/10 px-1">model.predict()</code> with your conf / IoU / image-size settings.</li>
           <li>Returned boxes are drawn with class name + confidence %; counts, average confidence, inference ms and measured FPS are shown.</li>
-          <li>Image and saved live snapshots are recorded in Detection History (SQLite) — live frames are only recorded when you save a snapshot.</li>
+          <li>Image detections, completed video sessions, and saved live snapshots appear in Detection History. Browser results are saved on this device.</li>
         </ol>
         <h3 className="mt-5 font-semibold">Recent inference sessions</h3>
         {recent.length ? <ul className="mt-2 space-y-1 text-sm text-slate-300">{recent.slice(0, 5).map(r => <li key={r.id}>#{r.id} · {r.created_at} · {r.input_type} · {r.object_count} object(s) · {r.classes.join(', ') || 'none'}</li>)}</ul> : <p className="mt-2 text-sm text-slate-400">No inference sessions recorded yet.</p>}

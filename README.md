@@ -7,6 +7,18 @@ from a webcam and in uploaded images — using real YOLOv8
 inference (Ultralytics, PyTorch, OpenCV). No fake detections, no simulated
 results: every bounding box, label and confidence score comes from the model.
 
+| Image mode | Objects it can find | Where it runs |
+| --- | --- | --- |
+| Everyday objects (365) | YOLOE with the Objects365 vocabulary, including categories such as glasses and sneakers | Browser, with weights bundled in the frontend |
+| Expanded objects (4,585) | A larger prompt-free YOLOE vocabulary | Browser, with a 125 MB first download |
+| Packages (trained) | Parcels, using a YOLOv8n detector fine-tuned on factory package photos | Browser, with weights bundled in the frontend |
+| COCO / selected backend model | The original 80 COCO categories or the labels learned by your selected checkpoint | Python backend, with a browser fallback for COCO |
+| Search by name | Object names you enter as prompts for YOLO-World | Python backend or Grounding DINO in the browser |
+
+Everyday objects is the default on a fresh install. The first frontend build or development launch downloads and verifies the 38 MB Objects365 weights. For a category outside its vocabulary, try Search by name. Small, occluded or unfamiliar objects can still be missed. See the [everyday model details](frontend/public/models/objects365.md) and [package training and held-out results](models/package-model.md).
+
+The expanded option uses the [YOLOE-11l prompt-free ONNX export and matching label list](https://huggingface.co/talmago/yoloe.onnx/tree/4ea526e5f1962d756e5cc7e13360ba5008a0d672) at a pinned revision. See the [original YOLOE project](https://github.com/THU-MIG/yoloe) and [AGPL-3.0 license](frontend/public/models/AGPL-3.0.txt). Choose it in Image Detection for more category coverage. The 365-category model remains the default for faster processing. Larger vocabularies can still miss or mislabel objects.
+
 ## Modules (exactly as specified)
 
 1. **Module 1 — Dataset Preparation** — upload images, annotate with a
@@ -18,10 +30,10 @@ results: every bounding box, label and confidence score comes from the model.
    mAP50-95 from `results.csv`; `best.pt` saved, downloadable and loadable.
 3. **Module 3 — Inference & Visualization** — live webcam (browser camera,
    frames sent to the backend) and image detection with annotated output.
-   Video detection was removed from the website; the backend still processes
-   videos when run locally (see API table).
+   Uploaded videos can be sampled in the browser using the 365-category detector,
+   or processed frame by frame on the backend and downloaded as annotated MP4.
 
-Plus: Overview Dashboard, Detection History (SQLite), Analytics & Reports
+Plus: Overview Dashboard, Detection History (browser storage and SQLite), Analytics & Reports
 (CSV + PDF), Settings (model, conf/IoU thresholds, image size, device).
 
 ## Architecture
@@ -79,27 +91,15 @@ Open **http://localhost:8000**. The first inference downloads `yolov8n.pt`
 (~6 MB, COCO 80 classes) from Ultralytics into `models/` — internet is
 required once for that download. The `.pt` file is git-ignored on purpose.
 
-## Why detection doesn't work on Vercel
+## Browser-only deployment on Vercel
 
-**Short version: Vercel hosts only the static frontend. There is no Python
-backend there, so every `/api/*` call fails — but image and live detection
-now fall back to running YOLOv8 in the browser (see "In-browser detection"
-below), so detection still works on the Vercel site. Training and
-history still need a backend.**
+Image detection, live webcam detection, and sampled video detection run in the
+browser on the Vercel site. Detection History shows image runs, completed video
+sessions, and saved webcam snapshots from this browser. Records saved in this
+browser stay in its site storage. Connect a backend for training, dataset
+management, full-frame video export, and server reports.
 
-This app is two parts: a React frontend and a FastAPI + PyTorch + YOLOv8
-backend. Vercel is a static/serverless host — it can serve the dashboard UI,
-but it cannot run the backend: PyTorch + Ultralytics are hundreds of MB (far
-over Vercel's serverless function size limit), training and video processing
-run for minutes (over the request timeout), and the backend keeps a model in
-memory and writes to SQLite/disk, which serverless functions don't do.
-
-What you see on a Vercel deploy: the dashboard loads, the header shows an
-amber **"Backend offline"** banner, and every detection/training/history
-action fails with a clear message instead of a wall of HTML — the frontend
-never pretends the backend is there.
-
-**To make a Vercel frontend actually detect objects, point it at a backend:**
+To connect the Vercel frontend to a backend:
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;
@@ -123,10 +123,9 @@ frontend itself on the same origin, and `VITE_API_URL` stays empty.
 ## In-browser detection (no backend)
 
 **Update: image and live-webcam detection now work even when the backend is
-offline.** When the frontend cannot reach the backend, the Image and Live
-pages automatically fall back to running real YOLOv8 inference inside the
-browser — the page shows a violet chip, "Running in your browser — no backend
-connected", so a browser result is never passed off as a backend result.
+offline.** When the frontend cannot reach the backend or the detection API
+is unavailable, the Image and Live pages automatically fall back to running real YOLOv8 inference inside the
+browser — the page shows a violet chip, "Running in your browser", so a browser result is never passed off as a backend result.
 
 How it works:
 
@@ -210,19 +209,42 @@ Limits — stated honestly (COCO path):
   inference in Node; in-browser wasm is slower (~2 fps effective for live
   video on a typical laptop). Photos are fine; live video is snapshots, not
   smooth video, until run on a faster machine.
-- **Training and history still need the backend.** They are not
-  faked in the browser: those pages keep saying the backend is required.
-  In-browser results are not saved to history. Video detection was removed
-  from the website entirely.
+- **Training needs the backend.** Browser detections and saved snapshots are
+  available in Detection History on the device that ran them.
 - **Tiny edge objects can differ from the backend.** Verified on the
   Ultralytics bus photo: the browser found the bus (84%) and all 4 people
   (88/88/87/43%), matching the backend's 6 detections except the tiny
   stop sign at the image edge (backend 26%, browser max score 4%) — a
   marginal object whose score depends on resize details.
 
+## Objects365 training data
+
+The [Objects365 overview](https://www.objects365.org/overview.html) lists
+about 2 million images, 365 object categories, and 30 million bounding boxes.
+The dataset covers everyday objects across varied scenes and is suited to
+pretraining before fine-tuning on retail or custom objects. The
+[Objects365 paper](https://openaccess.thecvf.com/content_ICCV_2019/html/Shao_Objects365_A_Large-Scale_High-Quality_Dataset_for_Object_Detection_ICCV_2019_paper.html)
+reports improved COCO detection scores over ImageNet pretraining in its experiments.
+
+The browser detector already includes the Objects365 vocabulary. To train,
+get the data from the [official download page](https://www.objects365.org/download.html).
+In **Dataset → Objects365**, import a ZIP containing one COCO-format
+annotation JSON and its matching images with the Python backend connected.
+Use subsets up to 100 MB per archive and keep image basenames unique within
+each ZIP. The importer converts boxes to YOLO labels and adds category names
+while preserving existing label IDs. Split the imported data before training.
+For conversion outside the app, see the
+[Ultralytics COCO-to-YOLO reference](https://docs.ultralytics.com/reference/data/converter/#ultralytics.data.converter.convert_coco).
+
 ## Built-in datasets (one-click download)
 
-Module 1 — Dataset has a **"Recommended datasets"** section with two official
+**Objects365 sample** downloads ten real annotated images from the
+[public Objects365 sample mirror](https://huggingface.co/datasets/ohjoonhee/Objects365-10BBoxes-Filtered).
+Open Dataset and choose **Download & import** with the backend connected.
+The importer converts boxes to YOLO format and keeps existing class IDs.
+Use this sample to test the workflow. Use the official release for larger training runs.
+
+Module 1 — Dataset also has two official
 Ultralytics COCO samples, verified live (HTTP 200) — click **Download &
 import** and the backend downloads, verifies and imports them into
 `dataset/images/all/` + `dataset/labels/all/`, with class names set to the
@@ -258,14 +280,14 @@ npm run dev
 
 Linux/macOS: same steps with `.venv/bin/activate` and `python3`.
 
-## Open-vocabulary detection (recognise any object)
+## Open-vocabulary detection (search by object name)
 
 The standard models (yolov8n/s/m/x) only know the 80 COCO classes — a
-"person", "car", "dog" and 77 others. If you need **any** object, use
+"person", "car", "dog" and 77 others. To look for objects beyond COCO, use
 **YOLO-World** (`yolov8s-worldv2.pt`, Ultralytics): it is an
 open-vocabulary detector, so you type the object names in plain English and
-it finds them — "red bus", "traffic light", "laptop", "cricket bat", anything
-you can name. No training and no dataset are needed for this.
+it searches for them — for example, "red bus", "traffic light", "laptop",
+or "cricket bat". This mode works without a training dataset.
 
 How to use it:
 
@@ -299,12 +321,15 @@ Notes and limits (honest):
 
 - **Overview Dashboard** — totals, class distribution and activity from
   recorded detections only. Empty states until the first real detection.
-- **Live Detection** — pick a camera, Start webcam, allow browser camera
-  access. Frames are captured at ~6 fps and POSTed to `/api/detect/frame`;
+- **Live Detection** — choose **Enable camera names** or **Start webcam**
+  and allow browser camera access. The camera list refreshes after permission,
+  when the window regains focus, and when the browser reports a device change.
+  Stop the stream before switching cameras. Frames are sampled up to ~6 fps;
   boxes/labels/confidence are drawn on a canvas overlay with measured FPS
-  and inference ms. Save snapshot stores that frame in history.
-- **Image Detection** — upload JPG/PNG, Run detection, download the
-  annotated image.
+  and inference ms. Auto-save stores the first detected frame and then up to one every 30 seconds in browser history. Save snapshot stores a result immediately. Small objects (expanded) checks cropped regions of larger frames and uses more processing time.
+- **Image Detection** — upload JPG, PNG, WebP, GIF, BMP or AVIF (up to 20 MB),
+  run detection, and download the annotated image. Animated images use the first
+  frame on the backend. Convert HEIC photos to JPEG before uploading.
 - **Dataset Preparation** — upload images, add classes, click an image and
   drag to draw boxes, Save annotations, set the train % and Split — this
   writes `dataset/data.yaml` and the `images/{train,val}` +
@@ -315,8 +340,10 @@ Notes and limits (honest):
   can be downloaded or loaded as the active model.
 - **Settings** — model path, confidence, IoU, image size, device. All are
   applied to real inference calls.
-- **History / Analytics** — search, filter, view, download and delete
-  records; charts from recorded data; CSV/PDF report export.
+- **Detection History** — search, filter, view, download, and delete saved
+  image runs, video sessions, and live snapshots. The page includes browser
+  records and any available backend records. Clearing the site's data removes
+  browser records. Analytics and CSV/PDF reports use backend records.
 
 ## LabelImg notes
 
@@ -374,7 +401,7 @@ into `dataset/labels/all/` and the matching images into
 - **Video processing slow** — also CPU-bound; progress is real frame count,
   so a long video takes a while. Short clips first.
 - **Port 8000 in use** — stop the other process, or edit the port in `run.py`.
-- **"Could not decode image"** — upload a valid JPG/PNG under 20 MB.
+- **"Could not decode image"** — upload a valid JPG, PNG, WebP, GIF, BMP or AVIF under 20 MB.
 - **Charts empty** — by design: analytics only show recorded detections.
   Run a detection first.
 

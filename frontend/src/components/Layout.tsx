@@ -1,22 +1,24 @@
-import { useEffect, useState } from 'react'
-import { Activity, BarChart3, Camera, Database, Gauge, History, Home, Image as ImageIcon, Layers, ScanEye, Settings as SettingsIcon, Video, X, Menu, Cpu } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { BarChart3, Camera, Database, History, Home, Image as ImageIcon, Layers, ScanEye, Settings as SettingsIcon, X, Menu, Cpu, PanelLeftClose, PanelLeftOpen, Video } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { api, ModelStatus } from '../lib/api'
 
-export type PageId = 'dashboard' | 'live' | 'image' | 'dataset' | 'training' | 'inference' | 'history' | 'analytics' | 'settings'
-export const NAV: { id: PageId; label: string; icon: any; group: string }[] = [
-  { id: 'dashboard', label: 'Overview Dashboard', icon: Home, group: 'Detect' },
+export type PageId = 'dashboard' | 'live' | 'image' | 'video' | 'dataset' | 'training' | 'inference' | 'history' | 'analytics' | 'settings'
+export const NAV: { id: PageId; label: string; icon: LucideIcon; group: string }[] = [
+  { id: 'dashboard', label: 'Overview', icon: Home, group: 'Detect' },
   { id: 'live', label: 'Live Detection', icon: Camera, group: 'Detect' },
   { id: 'image', label: 'Image Detection', icon: ImageIcon, group: 'Detect' },
-  { id: 'dataset', label: 'Module 1 — Dataset', icon: Database, group: 'Modules' },
-  { id: 'training', label: 'Module 2 — Training', icon: Layers, group: 'Modules' },
-  { id: 'inference', label: 'Module 3 — Inference', icon: ScanEye, group: 'Modules' },
+  { id: 'video', label: 'Video Detection', icon: Video, group: 'Detect' },
+  { id: 'dataset', label: 'Dataset', icon: Database, group: 'Modules' },
+  { id: 'training', label: 'Model Training', icon: Layers, group: 'Modules' },
+  { id: 'inference', label: 'Inference', icon: ScanEye, group: 'Modules' },
   { id: 'history', label: 'Detection History', icon: History, group: 'Data' },
   { id: 'analytics', label: 'Analytics & Reports', icon: BarChart3, group: 'Data' },
   { id: 'settings', label: 'Settings', icon: SettingsIcon, group: 'System' },
 ]
 
 export function Layout({ page, setPage, children }: { page: PageId; setPage: (p: PageId) => void; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
+  const menu = useRef<HTMLDialogElement>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [model, setModel] = useState<ModelStatus | null>(null)
   // Real backend reachability — never faked: 'checking' until /api/health answers.
@@ -43,75 +45,74 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
     }).catch(() => null)
     return () => { cancelled = true; unsub?.() }
   }, [backend])
-  const groups = ['Detect', 'Modules', 'Data', 'System']
-  const sidebar = (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 px-4 py-5">
-        <div className="rounded-xl bg-gradient-to-br from-sky-500 to-violet-500 p-2 text-white"><ScanEye size={20} /></div>
-        {!collapsed && <div><p className="font-bold leading-tight">Object Detection</p><p className="text-[11px] text-slate-400">YOLOv8 · ITA0523</p></div>}
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 1024px)')
+    const closeOnDesktop = () => { if (desktop.matches) menu.current?.close() }
+    desktop.addEventListener('change', closeOnDesktop)
+    return () => desktop.removeEventListener('change', closeOnDesktop)
+  }, [])
+  const label = NAV.find(item => item.id === page)?.label
+  const modelName = backend === 'offline' ? 'yolov8n.onnx' : model?.model_path?.split(/[\\/]/).pop() || 'yolov8n.pt'
+  const browserStates: Record<string, string> = { ready: 'Ready', downloading: 'Loading…', error: 'Failed to load' }
+  const modelState = backend === 'offline' ? browserStates[browserModel.state] || 'Not loaded' : model?.loaded ? 'Ready' : 'Not loaded'
+  const choose = (id: PageId) => {
+    menu.current?.close()
+    setPage(id)
+  }
+  const sidebar = (compact: boolean, mobile = false) => (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className={`flex h-[72px] shrink-0 items-center gap-3 border-b border-white/[0.07] ${compact ? 'justify-center' : 'px-5'}`}>
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-400 text-slate-950"><ScanEye size={21} /></span>
+        {!compact && <span className="min-w-0 flex-1 text-sm font-bold tracking-tight">Object Detection</span>}
+        {mobile && <button type="button" className="icon-button" onClick={() => menu.current?.close()} aria-label="Close navigation"><X size={18} /></button>}
       </div>
-      <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4">
-        {groups.map(g => (
-          <div key={g}>
-            {!collapsed && <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{g}</p>}
-            {NAV.filter(n => n.group === g).map(n => (
-              <button key={n.id} title={n.label} onClick={() => { setPage(n.id); setOpen(false) }}
-                className={`navitem ${page === n.id ? 'active' : ''} ${collapsed ? 'justify-center px-2' : ''}`}>
-                <n.icon size={18} className="shrink-0" />{!collapsed && n.label}
+      <nav aria-label="Main navigation" className="flex-1 space-y-5 overflow-y-auto px-3 py-5">
+        {['Detect', 'Modules', 'Data', 'System'].map(group => (
+          <div key={group} className="space-y-1">
+            {!compact && <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">{group}</p>}
+            {NAV.filter(item => item.group === group).map(item => (
+              <button key={item.id} type="button" title={item.label} aria-label={item.label}
+                aria-current={page === item.id ? 'page' : undefined}
+                onClick={() => choose(item.id)}
+                className={`navitem ${page === item.id ? 'active' : ''} ${compact ? 'justify-center !px-0' : ''}`}>
+                <item.icon size={17} className="shrink-0" />{!compact && item.label}
               </button>
             ))}
           </div>
         ))}
       </nav>
-      {!collapsed && (
-        <div className="m-3 rounded-xl bg-white/5 border border-white/10 p-3 text-xs">
-          <p className="flex items-center gap-1.5 font-semibold text-slate-200"><Cpu size={13} /> Model</p>
-          <p className="mt-1 truncate text-slate-400" title={backend === 'offline' ? 'yolov8n.onnx (in-browser)' : model?.model_path}>{backend === 'offline' ? (browserModel.state === 'ready' ? 'Loaded' : browserModel.state === 'downloading' ? 'Loading…' : browserModel.state === 'error' ? 'Failed to load' : 'Not loaded') : (model?.loaded ? 'Loaded' : 'Not loaded')} — {backend === 'offline' ? 'yolov8n.onnx (in-browser)' : (model?.model_path?.split('/').pop() || 'yolov8n.pt')}</p>
-          <p className="text-slate-500">{backend === 'offline' ? 'browser · 80 classes' : `${model?.device || 'cpu'} · ${model?.classes ?? 0} classes`}</p>
+      {!compact && <div className="mx-3 mb-4 flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.035] p-3">
+        <Cpu size={16} className="mt-0.5 shrink-0 text-indigo-300" />
+        <div className="min-w-0 text-xs">
+          <p className="truncate font-semibold text-slate-200" title={modelName}>{modelName}</p>
+          <p className="mt-1 text-slate-400" title={browserModel.error || undefined}>{backend === 'checking' ? 'Checking…' : `${modelState} · ${backend === 'offline' ? 'Browser' : model?.device || 'Backend'}`}</p>
         </div>
-      )}
+      </div>}
     </div>
   )
   return (
-    <div className="flex min-h-screen">
-      <aside className={`fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-white/10 bg-panel/95 backdrop-blur lg:block ${collapsed ? 'lg:w-16' : ''}`}>{sidebar}</aside>
-      {open && <div className="fixed inset-0 z-50 bg-black/60 lg:hidden" onClick={() => setOpen(false)}><aside className="h-full w-64 bg-panel" onClick={e => e.stopPropagation()}>{sidebar}</aside></div>}
-      <div className={`flex min-w-0 flex-1 flex-col ${collapsed ? 'lg:pl-16' : 'lg:pl-64'}`}>
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-white/10 bg-ink/85 px-4 py-3 backdrop-blur">
-          <button className="btn-ghost lg:hidden" onClick={() => setOpen(true)} aria-label="Open menu"><Menu size={18} /></button>
-          <button className="btn-ghost hidden lg:inline-flex" onClick={() => setCollapsed(!collapsed)} aria-label="Collapse sidebar"><Menu size={18} /></button>
-          <div className="min-w-0">
-            <h1 className="truncate text-base font-bold sm:text-lg">{NAV.find(n => n.id === page)?.label}</h1>
-            <p className="hidden text-xs text-slate-400 sm:block">Real-Time Object Detection System · YOLOv8 &amp; Deep Learning</p>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {backend === 'online'
-              ? <span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30"><Activity size={12} /> Backend connected</span>
-              : backend === 'offline'
-                ? <span className="chip !bg-amber-500/15 !text-amber-300 !border-amber-500/30"><Activity size={12} /> Backend offline</span>
-                : <span className="chip"><Activity size={12} /> Checking backend…</span>}
-            {backend === 'online' ? (
-              <span className={`chip ${model?.loaded ? '' : '!bg-red-500/15 !text-red-300 !border-red-500/30'}`}>
-                <Activity size={12} /> {model?.loaded ? `Model ready · ${model.device}` : 'Model not loaded'}
-              </span>
-            ) : backend === 'offline' ? (
-              browserModel.state === 'ready'
-                ? <span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30"><Activity size={12} /> Model ready · in-browser</span>
-                : browserModel.state === 'downloading'
-                  ? <span className="chip !bg-amber-500/15 !text-amber-300 !border-amber-500/30"><Activity size={12} /> Loading model…</span>
-                  : browserModel.state === 'error'
-                    ? <span className="chip !bg-red-500/15 !text-red-300 !border-red-500/30" title={browserModel.error}><Activity size={12} /> Model failed to load</span>
-                    : <span className="chip !bg-red-500/15 !text-red-300 !border-red-500/30"><Activity size={12} /> Model not loaded</span>
-            ) : (
-              <span className="chip"><Activity size={12} /> Checking backend…</span>
-            )}
-            <button className="btn-primary hidden sm:inline-flex" onClick={() => setPage('live')}><Video size={15} /> Quick start</button>
+    <div className="min-h-screen">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-indigo-300 focus:p-2 focus:text-slate-950">Skip to content</a>
+      <aside className={`fixed inset-y-0 left-0 z-40 hidden border-r border-white/[0.07] bg-panel lg:block ${collapsed ? 'w-[72px]' : 'w-60'}`}>{sidebar(collapsed)}</aside>
+      <dialog ref={menu} aria-label="Navigation" className="navigation-drawer" onClick={event => { if (event.target === event.currentTarget) menu.current?.close() }}>
+        {sidebar(false, true)}
+      </dialog>
+      <div className={`flex min-h-screen min-w-0 flex-col ${collapsed ? 'lg:pl-[72px]' : 'lg:pl-60'}`}>
+        <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-ink/95 backdrop-blur">
+          <div className="mx-auto flex h-[71px] max-w-[1440px] items-center gap-3 px-4 sm:px-7">
+            <button type="button" className="icon-button lg:hidden" onClick={() => menu.current?.showModal()} aria-label="Open navigation"><Menu size={19} /></button>
+            <button type="button" className="icon-button hidden lg:inline-grid" onClick={() => setCollapsed(value => !value)} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
+            <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight sm:text-xl">{label}</h1>
+            <span role="status" className="ml-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 px-2.5 py-1.5 text-xs text-slate-300 sm:px-3">
+              <span className={`h-2 w-2 rounded-full ${backend === 'online' ? 'bg-emerald-400' : backend === 'offline' ? 'bg-amber-400' : 'bg-slate-400'}`} />
+              {backend === 'online' ? 'Connected' : backend === 'offline' ? 'Backend offline' : 'Checking…'}
+            </span>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">{children}</main>
-        <footer className="border-t border-white/5 px-6 py-3 text-center text-xs text-slate-500">
-          ITA0523 Computer Vision capstone · YOLOv8 (Ultralytics) · PyTorch · OpenCV · All detections are real model inference — no simulated results.
-        </footer>
+        <main id="main-content" tabIndex={-1} className="mx-auto w-full min-w-0 max-w-[1440px] flex-1 p-4 focus:outline-none sm:p-7">{children}</main>
+        <footer className="border-t border-white/[0.07] px-4 py-4 text-center text-xs text-slate-400">ITA0523 Computer Vision · YOLOv8</footer>
       </div>
     </div>
   )
@@ -124,7 +125,7 @@ export function Toasts() {
     window.addEventListener('app-toast', h); return () => window.removeEventListener('app-toast', h)
   }, [])
   return (
-    <div className="fixed bottom-4 right-4 z-[100] space-y-2">
+    <div aria-live="polite" className="fixed bottom-4 right-4 z-[100] max-w-[calc(100vw-2rem)] space-y-2">
       {items.map(t => (
         <div key={t.id} className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm shadow-xl ${t.kind === 'err' ? 'border-red-500/40 bg-red-950/90 text-red-200' : 'border-sky-500/40 bg-slate-900/95 text-slate-100'}`}>
           <span>{t.msg}</span><button onClick={() => setItems(v => v.filter(i => i.id !== t.id))} aria-label="Dismiss"><X size={14} /></button>

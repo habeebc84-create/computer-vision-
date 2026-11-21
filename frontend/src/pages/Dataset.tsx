@@ -14,6 +14,8 @@ export default function Dataset() {
   const [drawClass, setDrawClass] = useState(0)
   const [trainPct, setTrainPct] = useState(80)
   const [yaml, setYaml] = useState('')
+  const [uploadErrors, setUploadErrors] = useState<{ file: string; message: string }[]>([])
+  const [importing, setImporting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [catalog, setCatalog] = useState<BuiltinDataset[]>([])
   const [dsBusy, setDsBusy] = useState('')
@@ -43,13 +45,30 @@ export default function Dataset() {
     const [s, im, c] = await Promise.all([api.dsStats(), api.dsImages(), api.dsClasses()])
     setStats(s); setImages(im); setClasses(c.classes)
   }
-  useEffect(() => { refresh().catch(() => null) }, [])
+  const importedDatasetCount = catalog.filter(dataset => dataset.status === 'imported').length
+  useEffect(() => { refresh().catch(() => null) }, [importedDatasetCount])
 
   const upload = async (files: FileList | null) => {
     if (!files?.length) return
     setBusy(true)
-    try { const r = await api.dsUpload(files); await refresh(); toast(`Uploaded ${r.saved.length} image(s)${r.skipped.length ? ` — ${r.skipped.length} skipped (JPG/PNG only)` : ''}`) }
-    catch (e: any) { toast(e.message, 'err') } finally { setBusy(false) }
+    setUploadErrors([])
+    try {
+      const result = await api.dsUpload(files)
+      setUploadErrors(result.errors ?? result.skipped.map(file => ({ file, message: 'The backend skipped this file.' })))
+      toast(`Uploaded ${result.saved.length} image(s)`)
+      await refresh()
+    } catch (e: any) { toast(e.message, 'err') }
+    finally { setBusy(false) }
+  }
+  const importArchive = async (file?: File) => {
+    if (!file || importing) return
+    setImporting(true)
+    try {
+      const result = await api.dsImportCoco(file)
+      toast(`Imported ${result.saved.length} images and ${result.classes} categories${result.skipped.length ? ` · ${result.skipped.length} images skipped` : ''}`)
+      await refresh()
+    } catch (error) { toast(error instanceof Error ? error.message : String(error), 'err') }
+    finally { setImporting(false) }
   }
   const selectImage = async (im: any) => {
     setSelected(im)
@@ -58,11 +77,18 @@ export default function Dataset() {
   const addClass = async () => {
     if (!newClass.trim()) return
     const next = [...classes, newClass.trim()]
-    await api.dsSetClasses(next); setClasses(next); setNewClass(''); toast(`Class “${newClass.trim()}” added`)
+    try {
+      await api.dsSetClasses(next)
+      setClasses(next); setNewClass(''); toast(`Class “${newClass.trim()}” added`)
+    } catch (e: any) { toast(e.message, 'err') }
   }
   const saveBoxes = async () => {
     if (!selected) return
-    await api.dsSaveAnnotations(selected.name, ann.boxes); await refresh(); toast(`Saved ${ann.boxes.length} annotation(s) for ${selected.name}`)
+    try {
+      await api.dsSaveAnnotations(selected.name, ann.boxes)
+      toast(`Saved ${ann.boxes.length} annotation(s) for ${selected.name}`)
+      await refresh()
+    } catch (e: any) { toast(e.message, 'err') }
   }
   const split = async () => {
     setBusy(true)
@@ -95,7 +121,7 @@ export default function Dataset() {
     <div className="space-y-4">
       <div className="card">
         <h2 className="font-semibold">Recommended datasets — one-click download</h2>
-        <p className="mt-1 text-sm text-slate-400">Official Ultralytics COCO samples with real images and real YOLO labels. Download one, then Split the dataset below and go to Module 2 — Training.</p>
+        <p className="mt-1 text-sm text-slate-400">Objects365 and COCO samples with real images and bounding-box labels. Download one, then Split the dataset below and go to Module 2 — Training.</p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {catalog.map(d => (
             <div key={d.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -108,7 +134,7 @@ export default function Dataset() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {d.status === 'imported'
                   ? <><span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30">Imported ✓ {d.imported_images} images · {d.imported_labels} labels</span>
-                    <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button></>
+                    {d.id !== 'objects365-sample' && <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button>}</>
                   : d.status === 'downloading'
                     ? <span className="chip">Downloading… {d.progress ?? 0}%</span>
                     : d.status === 'failed'
@@ -122,18 +148,54 @@ export default function Dataset() {
           {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+      <section className="card" aria-labelledby="objects365-heading">
+        <h2 id="objects365-heading" className="font-semibold">Objects365</h2>
+        <dl className="mt-3 grid gap-2 sm:grid-cols-3">
+          {[
+            ['Images', 'About 2 million'],
+            ['Object categories', '365'],
+            ['Bounding boxes', 'About 30 million'],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+              <dt className="text-xs text-slate-400">{label}</dt>
+              <dd className="text-sm font-semibold">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-3 text-sm text-slate-300">Designed for object detection, with manually annotated boxes across diverse everyday scenes. Use it for pretraining before fine-tuning on retail or other custom objects.</p>
+        <p className="mt-2 text-sm text-slate-400">The authors reported better COCO detection results with Objects365 pretraining than with ImageNet pretraining in their experiments.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a className="btn-ghost" href="https://www.objects365.org/download.html" target="_blank" rel="noreferrer">Download Objects365</a>
+          <a className="btn-ghost" href="https://docs.ultralytics.com/reference/data/converter/#ultralytics.data.converter.convert_coco" target="_blank" rel="noreferrer">Ultralytics conversion guide</a>
+        </div>
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <h3 className="font-semibold">Import a training subset</h3>
+          <p className="mt-1 text-sm text-slate-400">With the Python backend connected, upload a ZIP up to 100 MB containing the images and one COCO-format annotation JSON. Then split the dataset and open Model Training. To try it with real data first, import the 10-image Objects365 sample above.</p>
+          <label className="btn-primary mt-3 cursor-pointer focus-within:ring-2">
+            {importing ? 'Importing…' : 'Import annotated ZIP'}
+            <input type="file" accept=".zip,application/zip" aria-label="Import annotated ZIP" disabled={importing}
+              className="sr-only" onChange={event => { void importArchive(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
+          </label>
+        </div>
+      </section>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {[['Total images', stats?.total_images ?? 0], ['Annotations', stats?.total_annotations ?? 0], ['Classes', stats?.num_classes ?? 0], ['Train images', stats?.train_images ?? 0], ['Val images', stats?.val_images ?? 0]].map(([l, v]) => (
           <div key={l as string} className="card"><p className="text-xs uppercase tracking-wider text-slate-400">{l}</p><p className="mt-1 text-2xl font-bold">{v}</p></div>
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         <div className="card">
           <h2 className="font-semibold">A. Image collection</h2>
           <label className="mt-3 flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-white/15 px-4 py-6 text-center text-sm hover:border-sky-500/50">
-            <ImagePlus size={22} className="text-sky-400" /><span className="mt-1">Upload JPG / PNG images</span>
-            <input type="file" accept="image/jpeg,image/png" multiple className="hidden" onChange={e => upload(e.target.files)} />
+            <ImagePlus size={22} className="text-sky-400" /><span className="mt-1">Upload JPG, PNG, WebP, GIF, BMP or AVIF</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" multiple disabled={busy} className="hidden" onChange={e => {
+              void upload(e.currentTarget.files)
+              e.currentTarget.value = ''
+            }} />
           </label>
+          {uploadErrors.length > 0 && <ul role="alert" className="mt-2 space-y-1 text-sm text-red-300">
+            {uploadErrors.map(({ file, message }, index) => <li key={index}><b>{file}</b> · {message}</li>)}
+          </ul>}
           <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
             {images.map(im => (
               <button key={im.name} onClick={() => selectImage(im)} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm ${selected?.name === im.name ? 'border-sky-500/50 bg-sky-500/10' : 'border-white/10 bg-white/[0.03]'}`}>
@@ -147,7 +209,7 @@ export default function Dataset() {
           <div className="mt-2 flex flex-wrap gap-2">{classes.map((c, i) => <span key={i} className="chip">{i}: {c}</span>)}{!classes.length && <span className="text-sm text-slate-400">No classes defined yet.</span>}</div>
           <div className="mt-2 flex gap-2"><input className="input" placeholder="New class name, e.g. helmet" value={newClass} onChange={e => setNewClass(e.target.value)} onKeyDown={e => e.key === 'Enter' && addClass()} /><button className="btn-primary" onClick={addClass}><Plus size={15} /> Add</button></div>
         </div>
-        <div className="card lg:col-span-2">
+        <div className="card xl:col-span-2">
           <h2 className="font-semibold">B. Annotation — LabelImg-compatible (YOLO txt)</h2>
           {!selected ? <p className="mt-3 text-sm text-slate-400">Select an image on the left, then drag on it to draw a bounding box. Boxes are saved as YOLO text labels (class, centre-x, centre-y, width, height — normalised).</p> : (
             <>

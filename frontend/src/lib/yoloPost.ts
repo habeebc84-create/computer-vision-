@@ -82,11 +82,7 @@ function iou(a: number[], b: number[]): number {
   return inter / (areaA + areaB - inter)
 }
 
-/**
- * Parse a YOLOv8 ONNX output tensor of shape [1, 84, 8400] (row-major:
- * rows 0-3 are cx, cy, w, h in 640-space; rows 4-83 are the 80 class scores)
- * into detections in original-image pixels, with class-aware NMS.
- */
+/** Decode [batch, 4 + classes, anchors] YOLO outputs and undo the letterbox transform. */
 export function parseDetections(
   output: Float32Array,
   origW: number,
@@ -96,13 +92,19 @@ export function parseDetections(
   padY: number,
   confThreshold: number,
   iouThreshold: number,
+  classNames: readonly string[],
+  dimensions: readonly number[],
+  duplicateBoxIou?: number,
 ): Detection[] {
-  const N = 8400
+  const [batch, channels, N] = dimensions
+  if (dimensions.length !== 3 || batch !== 1 || channels !== 4 + classNames.length || output.length !== channels * N) {
+    throw new Error('The detection model output does not match its class labels.')
+  }
   const cands: Detection[] = []
   for (let j = 0; j < N; j++) {
     let bestClass = -1
     let bestScore = 0
-    for (let k = 0; k < 80; k++) {
+    for (let k = 0; k < classNames.length; k++) {
       const s = output[(4 + k) * N + j]
       if (s > bestScore) { bestScore = s; bestClass = k }
     }
@@ -117,16 +119,26 @@ export function parseDetections(
     if (x2 <= x1 || y2 <= y1) continue
     cands.push({
       class_id: bestClass,
-      class_name: COCO_NAMES[bestClass],
+      class_name: classNames[bestClass],
       confidence: bestScore,
       bbox: [Math.round(x1 * 10) / 10, Math.round(y1 * 10) / 10, Math.round(x2 * 10) / 10, Math.round(y2 * 10) / 10],
     })
   }
+  return suppressDuplicates(cands, iouThreshold, duplicateBoxIou)
+}
+
+export function suppressDuplicates(candidates: Detection[], iouThreshold: number, duplicateBoxIou?: number): Detection[] {
   // Class-aware NMS, highest confidence first.
-  cands.sort((a, b) => b.confidence - a.confidence)
+  const sorted = [...candidates].sort((a, b) => b.confidence - a.confidence)
   const kept: Detection[] = []
-  for (const d of cands) {
-    if (kept.some(k => k.class_id === d.class_id && iou(k.bbox, d.bbox) > iouThreshold)) continue
+  for (const d of sorted) {
+    // Broad vocabularies can assign near-identical boxes competing labels
+    // such as sneaker and boot. Keep the highest confidence label for those.
+    const duplicate = kept.some(k => {
+      const threshold = k.class_id === d.class_id ? iouThreshold : duplicateBoxIou
+      return threshold !== undefined && iou(k.bbox, d.bbox) > threshold
+    })
+    if (duplicate) continue
     kept.push(d)
   }
   return kept
