@@ -45,8 +45,7 @@ export default function Dataset() {
     const [s, im, c] = await Promise.all([api.dsStats(), api.dsImages(), api.dsClasses()])
     setStats(s); setImages(im); setClasses(c.classes)
   }
-  const importedDatasetCount = catalog.filter(dataset => dataset.status === 'imported').length
-  useEffect(() => { refresh().catch(() => null) }, [importedDatasetCount])
+  useEffect(() => { refresh().catch(() => null) }, [])
 
   const upload = async (files: FileList | null) => {
     if (!files?.length) return
@@ -121,7 +120,7 @@ export default function Dataset() {
     <div className="space-y-4">
       <div className="card">
         <h2 className="font-semibold">Recommended datasets — one-click download</h2>
-        <p className="mt-1 text-sm text-slate-400">Objects365 and COCO samples with real images and bounding-box labels. Download one, then Split the dataset below and go to Module 2 — Training.</p>
+        <p className="mt-1 text-sm text-slate-400">Official Ultralytics COCO samples with real images and real YOLO labels. Download one, then Split the dataset below and go to Module 2 — Training.</p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {catalog.map(d => (
             <div key={d.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -134,7 +133,7 @@ export default function Dataset() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {d.status === 'imported'
                   ? <><span className="chip !bg-emerald-500/15 !text-emerald-300 !border-emerald-500/30">Imported ✓ {d.imported_images} images · {d.imported_labels} labels</span>
-                    {d.id !== 'objects365-sample' && <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button>}</>
+                    <button className="btn-ghost" onClick={() => { downloadDataset(d.id, true); refresh() }} disabled={dsBusy === d.id}>Re-download</button></>
                   : d.status === 'downloading'
                     ? <span className="chip">Downloading… {d.progress ?? 0}%</span>
                     : d.status === 'failed'
@@ -170,7 +169,7 @@ export default function Dataset() {
         </div>
         <div className="mt-4 border-t border-white/10 pt-4">
           <h3 className="font-semibold">Import a training subset</h3>
-          <p className="mt-1 text-sm text-slate-400">With the Python backend connected, upload a ZIP up to 100 MB containing the images and one COCO-format annotation JSON. Then split the dataset and open Model Training. To try it with real data first, import the 10-image Objects365 sample above.</p>
+          <p className="mt-1 text-sm text-slate-400">With the Python backend connected, upload a ZIP up to 100 MB containing the images and one COCO-format annotation JSON. Then split the dataset and open Model Training. The full Objects365 release is available from the official download page.</p>
           <label className="btn-primary mt-3 cursor-pointer focus-within:ring-2">
             {importing ? 'Importing…' : 'Import annotated ZIP'}
             <input type="file" accept=".zip,application/zip" aria-label="Import annotated ZIP" disabled={importing}
