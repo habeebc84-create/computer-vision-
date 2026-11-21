@@ -166,12 +166,18 @@ class ModelManager:
         """Run real inference on a BGR numpy image. Returns (detections, ms)."""
         model = self.ensure_loaded()
         s = load_settings()
+        is_package = bool(self.model_path and "package-yolov8n" in str(self.model_path))
+        h, w = bgr.shape[:2]
+        src = cv2.resize(bgr, (320, 320), interpolation=cv2.INTER_LINEAR) if is_package else bgr
+        imgsz = 320 if is_package else int(s["imgsz"])
         t0 = time.perf_counter()
         with self._lock:
-            results = model.predict(source=bgr, conf=float(s["conf"]),
-                                    iou=float(s["iou"]), imgsz=int(s["imgsz"]),
+            results = model.predict(source=src, conf=float(s["conf"]),
+                                    iou=float(s["iou"]), imgsz=imgsz,
                                     device=self.device(), verbose=False)
         ms = (time.perf_counter() - t0) * 1000.0
+        sx = (w / 320.0) if is_package else 1.0
+        sy = (h / 320.0) if is_package else 1.0
         dets = []
         if results:
             r = results[0]
@@ -180,10 +186,11 @@ class ModelManager:
                 confs = r.boxes.conf.cpu().numpy()
                 clss = r.boxes.cls.cpu().numpy().astype(int)
                 for box, c, cl in zip(xyxy, confs, clss):
+                    x1, y1, x2, y2 = float(box[0]) * sx, float(box[1]) * sy, float(box[2]) * sx, float(box[3]) * sy
                     dets.append({"class_id": int(cl),
                                  "class_name": r.names.get(int(cl), str(int(cl))),
                                  "confidence": round(float(c), 4),
-                                 "bbox": [round(float(v), 1) for v in box]})
+                                 "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)]})
         return dets, ms
 
     def annotate(self, bgr, dets):

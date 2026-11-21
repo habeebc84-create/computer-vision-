@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { CameraOff, Download, Play, Sparkles, Square, Video } from 'lucide-react'
-import { api, DetectResult, detectWithFallback, parseDetectionPrompts, toast } from '../lib/api'
+import { api, DetectResult, detectWithFallback, isBackendOnline, parseDetectionPrompts, toast } from '../lib/api'
 import { saveBrowserHistory } from '../lib/browserHistory'
 import type { BrowserDetectResult } from '../lib/browserDetection'
 import { DetectionTable } from '../components/ui'
 
-type FrameResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine'>>
+type FrameResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine' | 'peak_confidence' | 'conf_threshold'>>
 
 export default function Live() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -44,6 +44,9 @@ export default function Live() {
   const [source, setSource] = useState<'backend' | 'browser' | null>(null)
   const [modelPct, setModelPct] = useState<number | null>(null)
   const [promptStatus, setPromptStatus] = useState('')
+  // Consecutive frames that ran fine but produced no box — used to explain a
+  // silent screen instead of leaving the user guessing why nothing appears.
+  const [silentFrames, setSilentFrames] = useState(0)
   // Refs so the interval callback always reads the latest mode/prompts.
   const modeRef = useRef(mode); modeRef.current = mode
   const classesRef = useRef(classesText); classesRef.current = classesText
@@ -69,6 +72,20 @@ export default function Live() {
       const file = m.model_path?.split(/[/\\]/).pop() || ''
       if (file.includes('world')) setMode('world')
       else if (file && !/^yolov8[nsmlx]\.pt$/.test(file)) setBackendModel(file)
+    }).catch(() => null)
+    // With no backend, detection runs in this browser. Check which weights the
+    // deployment actually serves and start on one that works, instead of
+    // opening on COCO and failing on the very first frame.
+    void isBackendOnline().then(async online => {
+      if (online || !mountedRef.current) return
+      const { isModelAvailable } = await import('../lib/browserDetection')
+      if (await isModelAvailable('coco')) return
+      if (!mountedRef.current) return
+      if (await isModelAvailable('broad')) return
+      if (!mountedRef.current) return
+      // No bundled weights and no remote COCO export: open vocabulary is the
+      // only path that can still find objects here.
+      setMode('world')
     }).catch(() => null)
     return () => {
       mountedRef.current = false
@@ -172,6 +189,26 @@ export default function Live() {
       lastResultAt.current = now
       setError(''); setSource(source); setResult(res)
       draw(res.detections, frame.width, frame.height)
+      // An empty frame is a real result, but a permanently silent overlay looks
+      // broken. Once several frames in a row pass the model yet nothing clears
+      // the threshold, say so and name the two things the user can change.
+      const peak = res.peak_confidence
+      const threshold = res.conf_threshold
+      if (res.count === 0 && peak !== undefined && threshold !== undefined) {
+        setSilentFrames(frames => {
+          const next = frames + 1
+          if (next === 6) {
+            setError(
+              `The detector is running but nothing has passed the ${(threshold * 100).toFixed(0)}% confidence threshold ` +
+              `(best candidate so far: ${(peak * 100).toFixed(0)}%). Point the camera at a familiar object, add light, ` +
+              'or lower the confidence threshold in Settings.',
+            )
+          }
+          return next
+        })
+      } else if (res.count > 0) {
+        setSilentFrames(0)
+      }
       if (autoSaveRef.current && res.count > 0 && Date.now() - lastAutoSave.current >= 30_000) {
         lastAutoSave.current = Date.now()
         try {
@@ -269,6 +306,7 @@ export default function Live() {
     if (!mountedRef.current) return
     setStreamAspect(null)
     setRunning(false); setResult(null); setFps(0); setSource(null); setModelPct(null); setPromptStatus('')
+    setSilentFrames(0)
   }
   const storeLiveFrame = (result: FrameResult, previewDataUrl: string | undefined, source: 'browser' | 'backend') =>
     saveBrowserHistory({

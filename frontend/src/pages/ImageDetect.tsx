@@ -8,7 +8,7 @@ import { DetectionTable } from '../components/ui'
 import { COCO_NAMES } from '../lib/yoloPost'
 
 type Mode = 'broad' | 'expanded' | 'package' | 'coco' | 'world'
-type ImageResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine'>> & { prompts?: string[] }
+type ImageResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine' | 'peak_confidence' | 'conf_threshold'>> & { prompts?: string[] }
 
 const COCO_GROUPS: { title: string; items: string[] }[] = [
   { title: 'People', items: ['person'] },
@@ -66,6 +66,10 @@ export default function ImageDetect() {
   const [chosenMode, setMode] = useState<Mode | null>(null)
   const [backendModel, setBackendModel] = useState('')
   const mode = chosenMode ?? (backendModel.includes('world') ? 'world' : backendModel && backendModel !== 'yolov8n.pt' ? 'coco' : 'broad')
+  // The Everyday-objects weights are fetched at build time and may be missing
+  // if that download failed. Probe once and start on a mode that works rather
+  // than opening on one whose model can never load.
+  const [available, setAvailable] = useState<Record<string, boolean> | null>(null)
   const customSelected = Boolean(backendModel) && !/^yolov8[nsmlx]\.pt$/.test(backendModel)
   const [classesText, setClassesText] = useState('bus, person, traffic light')
   // Where the last result actually came from — never mislabelled.
@@ -77,6 +81,10 @@ export default function ImageDetect() {
     let mounted = true
     api.modelStatus().then(status => {
       if (mounted) setBackendModel(status.model_path?.split(/[/\\]/).pop() || '')
+    }).catch(() => null)
+    void import('../lib/browserDetection').then(async m => {
+      const [coco, broad] = await Promise.all([m.isModelAvailable('coco'), m.isModelAvailable('broad')])
+      if (mounted) setAvailable({ coco, broad })
     }).catch(() => null)
     return () => { mounted = false }
   }, [])
@@ -157,6 +165,13 @@ export default function ImageDetect() {
     catch (e: any) { setError(e.message); toast(e.message, 'err') }
     finally { setBusy(false); setModelPct(null); setPromptStatus('') }
   }
+  // If the default mode's weights are missing, move to COCO (remote weights,
+  // normally available) — an explanatory line under the buttons still says so.
+  useEffect(() => {
+    if (!available || chosenMode) return
+    if (!available.broad && available.coco) setMode('coco')
+  }, [available, chosenMode])
+
   const annotatedSrc = result?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
   return (
     <>
@@ -177,6 +192,12 @@ export default function ImageDetect() {
           ))}
         </div>
         {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
+        {available && !available[mode] && (
+          <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            This mode's model weights are not available on this deployment, so it cannot run right now.
+            {' '}Use <b>COCO classes</b> or <b>Search by name</b> — both work without those files.
+          </p>
+        )}
         {(mode === 'broad' || mode === 'expanded') && (
           <label className="mb-3 flex items-start gap-2 text-sm text-slate-300">
             <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-400" checked={scanSmallObjects}
@@ -232,8 +253,15 @@ export default function ImageDetect() {
           {result ? (
             <div className="mt-3 space-y-2 text-sm">
               <p className="flex justify-between"><span className="text-slate-400">Total objects</span><b>{result.count}</b></p>
-              {result.count === 0 && mode === 'broad' && !scanSmallObjects && (
-                <p className="text-slate-300">No objects met the confidence threshold. For small or distant objects, try enabling “Look for small objects”.</p>
+              {result.count === 0 && (
+                <p className="text-slate-300">
+                  Nothing passed the {result.conf_threshold !== undefined ? `${(result.conf_threshold * 100).toFixed(0)}% ` : ''}confidence threshold
+                  {result.peak_confidence !== undefined && (
+                    <> — the best candidate scored {(result.peak_confidence * 100).toFixed(0)}%</>
+                  )}.
+                  {' '}Lower the confidence threshold in Settings, use a clearer or closer photo, or try another mode.
+                  {mode === 'broad' && !scanSmallObjects && <> For small or distant objects, enable “Look for small objects”.</>}
+                </p>
               )}
               {result.prompts && <p className="flex justify-between"><span className="text-slate-400">Looking for</span><b className="text-right">{result.prompts.join(', ')}</b></p>}
               <p className="flex justify-between"><span className="text-slate-400">Unique classes</span><b>{result.unique_classes.join(', ') || '—'}</b></p>
