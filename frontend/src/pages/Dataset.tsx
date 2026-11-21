@@ -147,18 +147,36 @@ export default function Dataset() {
           {!catalog.length && <p className="text-sm text-slate-400">Could not load the dataset catalog — is the backend running?</p>}
         </div>
       </div>
-      <div className="card">
-        <h2 className="font-semibold">Objects365 and custom datasets</h2>
-        <p className="mt-2 text-sm text-slate-400">Import a ZIP with images and one COCO-format annotation JSON file. Use a subset up to 100 MB for Objects365.</p>
+      <section className="card" aria-labelledby="objects365-heading">
+        <h2 id="objects365-heading" className="font-semibold">Objects365</h2>
+        <dl className="mt-3 grid gap-2 sm:grid-cols-3">
+          {[
+            ['Images', 'About 2 million'],
+            ['Object categories', '365'],
+            ['Bounding boxes', 'About 30 million'],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+              <dt className="text-xs text-slate-400">{label}</dt>
+              <dd className="text-sm font-semibold">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-3 text-sm text-slate-300">Designed for object detection, with manually annotated boxes across diverse everyday scenes. Use it for pretraining before fine-tuning on retail or other custom objects.</p>
+        <p className="mt-2 text-sm text-slate-400">The authors reported better COCO detection results with Objects365 pretraining than with ImageNet pretraining in their experiments.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a className="btn-ghost" href="https://www.objects365.org/download.html" target="_blank" rel="noreferrer">Get Objects365</a>
-          <label className="btn-primary cursor-pointer focus-within:ring-2">
+          <a className="btn-ghost" href="https://www.objects365.org/download.html" target="_blank" rel="noreferrer">Download Objects365</a>
+          <a className="btn-ghost" href="https://docs.ultralytics.com/reference/data/converter/#ultralytics.data.converter.convert_coco" target="_blank" rel="noreferrer">Ultralytics conversion guide</a>
+        </div>
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <h3 className="font-semibold">Import a training subset</h3>
+          <p className="mt-1 text-sm text-slate-400">With the Python backend connected, upload a ZIP up to 100 MB containing the images and one COCO-format annotation JSON. Then split the dataset and open Model Training. The full Objects365 release is available from the official download page.</p>
+          <label className="btn-primary mt-3 cursor-pointer focus-within:ring-2">
             {importing ? 'Importing…' : 'Import annotated ZIP'}
             <input type="file" accept=".zip,application/zip" aria-label="Import annotated ZIP" disabled={importing}
               className="sr-only" onChange={event => { void importArchive(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
           </label>
         </div>
-      </div>
+      </section>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {[['Total images', stats?.total_images ?? 0], ['Annotations', stats?.total_annotations ?? 0], ['Classes', stats?.num_classes ?? 0], ['Train images', stats?.train_images ?? 0], ['Val images', stats?.val_images ?? 0]].map(([l, v]) => (
           <div key={l as string} className="card"><p className="text-xs uppercase tracking-wider text-slate-400">{l}</p><p className="mt-1 text-2xl font-bold">{v}</p></div>

@@ -219,13 +219,22 @@ Limits — stated honestly (COCO path):
 
 ## Objects365 training data
 
-The browser detector already includes the Objects365 vocabulary. For custom
-training, download data from the [Objects365 download page](https://www.objects365.org/download.html).
-In **Dataset → Objects365 and custom datasets**, import a ZIP containing one
-COCO-format annotation JSON and its corresponding images. Use subsets of up
-to 100 MB per archive and keep image basenames unique within each ZIP. Boxes
-are converted to YOLO labels, and category names are added without changing
-existing label IDs. Then split the dataset before training.
+The [Objects365 overview](https://www.objects365.org/overview.html) lists
+about 2 million images, 365 object categories, and 30 million bounding boxes.
+The dataset covers everyday objects across varied scenes and is suited to
+pretraining before fine-tuning on retail or custom objects. The
+[Objects365 paper](https://openaccess.thecvf.com/content_ICCV_2019/html/Shao_Objects365_A_Large-Scale_High-Quality_Dataset_for_Object_Detection_ICCV_2019_paper.html)
+reports improved COCO detection scores over ImageNet pretraining in its experiments.
+
+The browser detector already includes the Objects365 vocabulary. To train,
+get the data from the [official download page](https://www.objects365.org/download.html).
+In **Dataset → Objects365**, import a ZIP containing one COCO-format
+annotation JSON and its matching images with the Python backend connected.
+Use subsets up to 100 MB per archive and keep image basenames unique within
+each ZIP. The importer converts boxes to YOLO labels and adds category names
+while preserving existing label IDs. Split the imported data before training.
+For conversion outside the app, see the
+[Ultralytics COCO-to-YOLO reference](https://docs.ultralytics.com/reference/data/converter/#ultralytics.data.converter.convert_coco).
 
 ## Built-in datasets (one-click download)
 
