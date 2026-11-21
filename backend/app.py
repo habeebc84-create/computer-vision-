@@ -108,6 +108,10 @@ def _store_detection(kind, annotated, dets, ms, model):
     name = f"{kind}_{uuid.uuid4().hex}.jpg"
     path = OUT_IMG / name
     output_path = f"outputs/images/{name}"
+    # The outputs/ tree is created at startup, but defend against it being
+    # removed at runtime so a detection never fails just because a folder
+    # disappeared.
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         path.write_bytes(encode_jpeg(annotated))
         record_id = analytics.record(kind, dets, fps=1000/max(ms, .01), inference_ms=ms,
