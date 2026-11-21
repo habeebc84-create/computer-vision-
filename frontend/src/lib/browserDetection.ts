@@ -3,7 +3,7 @@ import wasmModuleUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd
 import wasmBinaryUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url'
 import {
   COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, fitParams, rgbaToTensor, parseDetections,
-  parseRowDetections, peakScore, suppressDuplicates, summarise,
+  parseRowDetections, peakScore, suppressDuplicates, summarise, isRowOutput,
   type Detection, type Fit, type ResizeMode, getLocalSettings,
 } from './yoloPost'
 
@@ -12,16 +12,9 @@ import { EXPANDED_MODEL_URL, expandedLabels } from './expandedYolo'
 
 export { COCO_NAMES, getLocalSettings }
 
-/**
- * COCO (80-class) ONNX weights. The previous URL pointed at a Hugging Face
- * repo that does not exist (HTTP 404), so "COCO classes" mode could never load
- * a model — every run failed with a download error. These are plain
- * Ultralytics YOLOv8n exports (input 1x3x640x640, output 1x84x8400), which is
- * exactly what parseDetections() decodes.
- */
-export const ONNX_MODEL_URL =
-  'https://huggingface.co/inference4j/yolov8n/resolve/main/model.onnx'
-// Same weights, different host — tried automatically if the first fails.
+/** A local COCO model is shipped with the app so live detection does not
+ * depend on a third-party model host being reachable from the browser. */
+export const ONNX_MODEL_URL = import.meta.env.BASE_URL + 'models/yolov8n.onnx'
 const ONNX_MODEL_MIRROR =
   'https://huggingface.co/salim4n/yolov8n-detect-onnx/resolve/main/yolov8n-onnx-web/yolov8n.onnx'
 
@@ -350,9 +343,7 @@ function decode(
   //   A. [1, 4+classes, anchors]  Ultralytics YOLOv8/YOLOE detection export
   //   B. [1, anchors, 4+classes]  the same tensor transposed
   //   C. [1, anchors, 6+]         NMS-free rows: x1,y1,x2,y2,score,classId,…
-  const channels = dims.length === 3 ? dims[1] : 0
-  const stride = dims.length === 3 ? dims[2] : 0
-  const rowShape = channels > 6 && stride >= 6 && stride !== 4 + labels.length
+  const rowShape = isRowOutput(dims, labels.length)
   if (spec.layout === 'rows' || rowShape) {
     return { detections: parseRowDetections(data, dims, labels, w, h, fit, conf, iou, 0.9), peak: 0 }
   }

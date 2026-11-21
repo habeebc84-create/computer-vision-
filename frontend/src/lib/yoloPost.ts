@@ -23,6 +23,16 @@ export const COCO_NAMES = [
   'toothbrush',
 ]
 
+/** Identify post-NMS row outputs without mistaking channel-first YOLO tensors for rows. */
+export function isRowOutput(dimensions: readonly number[], classCount: number): boolean {
+  if (dimensions.length !== 3) return false
+  const [, first, second] = dimensions
+  const channels = 4 + classCount
+  if (first === channels || second === channels) return false
+  // Post-NMS exports have a small row stride (box, confidence, class, extras).
+  return first > 6 && second >= 6 && second < first
+}
+
 export const MODEL_INPUT_SIZE = 640
 
 // Detection thresholds, shared by backend and in-browser inference.

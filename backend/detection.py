@@ -129,16 +129,9 @@ class ModelManager:
         # models/ does not exist on a fresh clone (git-ignored) — create it
         # before YOLO() so the first-use download has somewhere to go.
         p.parent.mkdir(parents=True, exist_ok=True)
-        # If the configured/default weights are missing on disk, fall back to
-        # the detector shipped with the repo (models/package-yolov8n.pt) so
-        # detection keeps working offline instead of retrying a download that
-        # cannot complete. An explicitly requested path is never silently
-        # substituted — a bad path given to model.load() still raises.
-        requested = p
-        if path is None and not p.exists():
-            fallback = BASE / "models" / "package-yolov8n.pt"
-            if fallback.exists():
-                p = fallback
+        # Do not silently substitute the package-only detector for COCO: it
+        # cannot recognize people and everyday objects. A missing default model
+        # should download normally or fail clearly so the browser can fall back.
         self.load_error = None
         try:
             candidate = YOLO(str(p))
@@ -147,10 +140,6 @@ class ModelManager:
             self.model_path = str(p)
             self.class_names = names
             self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            # Remember the substitution so a restart does not repeat the
-            # failed download attempt; explicit requests are left untouched.
-            if path is None and p != requested:
-                save_settings({"model_path": f"models/{p.name}"})
             return True
         except Exception as e:
             self.load_error = str(e)
