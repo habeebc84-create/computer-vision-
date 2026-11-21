@@ -16,8 +16,10 @@ export default function Live() {
   const inFlightRef = useRef(false)
   const mountedRef = useRef(false)
   const requestRef = useRef(0)
-  // Aspect ratio of the live camera stream (set once the stream starts), so
-  // the stage fits the camera instead of squeezing it into a fixed 16:9 box.
+  const lastAutoSave = useRef(0)
+  const autoSaveRef = useRef(true)
+  const retryAfter = useRef(0)
+  const lastResultAt = useRef(0)
   const [streamAspect, setStreamAspect] = useState<number | null>(null)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<FrameResult | null>(null)
@@ -30,7 +32,13 @@ export default function Live() {
   const [enablingNames, setEnablingNames] = useState(false)
   const [busy, setBusy] = useState(false)
   const [savingSnapshot, setSavingSnapshot] = useState(false)
-  const [mode, setMode] = useState<'coco' | 'world'>('coco')
+  const [mode, setMode] = useState<'coco' | 'small' | 'world'>('coco')
+  const [autoSave, setAutoSave] = useState(() => {
+    try { return localStorage.getItem('ods-auto-save-live') !== 'off' }
+    catch { return true }
+  })
+  const [autoSaveStatus, setAutoSaveStatus] = useState('')
+  autoSaveRef.current = autoSave
   const [classesText, setClassesText] = useState('person, car, dog')
   const [source, setSource] = useState<'backend' | 'browser' | null>(null)
   const [modelPct, setModelPct] = useState<number | null>(null)
@@ -63,15 +71,16 @@ export default function Live() {
     }
   }, [])
 
-  const draw = (dets: any[], w: number, h: number) => {
+  const draw = (dets: DetectResult['detections'], w: number, h: number) => {
     // Boxes come back in original video pixels, but the video is shown with
     // object-contain inside the stage, so it is letterboxed whenever the
     // camera's aspect differs from the stage's. Drawing the boxes in video
     // pixels across the whole stage put them in the wrong place (or off the
     // picture entirely on portrait phone cameras) — so map every box onto
     // the video's actual displayed rectangle inside the stage.
-    const c = canvasRef.current; const v = videoRef.current; const stage = stageRef.current
-    if (!c || !v || !stage) return
+    const c = canvasRef.current
+    const stage = stageRef.current
+    if (!c || !stage) return
     const cw = stage.clientWidth; const ch = stage.clientHeight
     if (!cw || !ch || !w || !h) return
     const dpr = window.devicePixelRatio || 1
@@ -83,7 +92,7 @@ export default function Live() {
     const dw = w * scale; const dh = h * scale
     const ox = (cw - dw) / 2; const oy = (ch - dh) / 2
     const colors = ['#38bdf8', '#22d3ee', '#a78bfa', '#34d399', '#fb923c', '#f472b6', '#facc15']
-    dets.forEach((d, i) => {
+    dets.forEach(d => {
       const [x1, y1, x2, y2] = d.bbox
       const color = colors[d.class_id % colors.length]
       const bx = ox + x1 * scale; const by = oy + y1 * scale
@@ -104,7 +113,7 @@ export default function Live() {
     // In-flight guard: never stack overlapping inference requests — if the
     // previous frame is still being processed (slow CPU inference), skip
     // this tick instead of queuing another POST.
-    if (inFlightRef.current) return
+    if (inFlightRef.current || Date.now() < retryAfter.current) return
     const v = videoRef.current; if (!v || v.readyState < 2) return
     const stream = streamRef.current
     if (!stream || !v.videoWidth || !v.videoHeight) return
@@ -122,7 +131,12 @@ export default function Live() {
       const progress = (loaded: number, total: number) => {
         if (total > 0 && current()) setModelPct(Math.round(loaded / total * 100))
       }
-      const { result: res, source } = await detectWithFallback<FrameResult>(
+      const runSmallObjects = async () => {
+        const { detectInBrowser } = await import('../lib/browserDetection')
+        const result = await detectInBrowser(frame, frame.width, frame.height, progress, 'expanded', true)
+        return { result, source: 'browser' as const }
+      }
+      const { result: res, source } = await (mode === 'small' ? runSmallObjects() : detectWithFallback<FrameResult>(
         async () => {
           const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.85))
           if (!blob) throw new Error('Could not encode the camera frame.')
@@ -139,12 +153,36 @@ export default function Live() {
           const { detectInBrowser } = await import('../lib/browserDetection')
           return detectInBrowser(frame, frame.width, frame.height, progress)
         },
-      )
+      ))
       if (!current()) return
-      setError(''); setSource(source); setResult(res); setFps(res.fps)
+      const now = performance.now()
+      setFps(lastResultAt.current ? 1000 / (now - lastResultAt.current) : 0)
+      lastResultAt.current = now
+      setError(''); setSource(source); setResult(res)
       draw(res.detections, frame.width, frame.height)
+      if (autoSaveRef.current && res.count > 0 && Date.now() - lastAutoSave.current >= 30_000) {
+        lastAutoSave.current = Date.now()
+        try {
+          let preview = res.annotatedDataUrl
+          if (!preview) {
+            const { annotate } = await import('../lib/browserDetection')
+            preview = annotate(frame, frame.width, frame.height, res.detections)
+          }
+          if (!current() || !autoSaveRef.current) return
+          await storeLiveFrame(res, preview, source)
+          if (current()) setAutoSaveStatus('Snapshot saved in Detection History')
+        } catch (error) {
+          if (current()) {
+            setAutoSave(false)
+            setAutoSaveStatus(error instanceof Error ? error.message : 'Could not save the live snapshot.')
+          }
+        }
+      }
     } catch (error) {
-      if (current()) setError(error instanceof Error ? error.message : 'Frame inference failed.')
+      if (current()) {
+        retryAfter.current = Date.now() + 3000
+        setError(error instanceof Error ? error.message : 'Frame inference failed.')
+      }
     } finally {
       inFlightRef.current = false
       if (mountedRef.current) { setModelPct(null); setPromptStatus('') }
@@ -160,7 +198,10 @@ export default function Live() {
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access requires HTTPS or localhost.')
       stream = await navigator.mediaDevices.getUserMedia({
-        video: !preview && deviceId ? { deviceId: { exact: deviceId } } : true,
+        video: preview ? true : {
+          ...(deviceId && { deviceId: { exact: deviceId } }),
+          width: { ideal: 1280 }, height: { ideal: 720 },
+        },
         audio: false,
       })
       if (!current()) return
@@ -175,13 +216,16 @@ export default function Live() {
       video.srcObject = stream
       await video.play()
       if (!current()) return
-      if (video.videoWidth > 0) setStreamAspect(video.videoWidth / video.videoHeight)
       stream.getVideoTracks()[0]?.addEventListener('ended', () => {
         if (streamRef.current !== stream) return
         stop()
         setError('The active camera disconnected or access was revoked. Select a camera and start again.')
         void refreshCameras().catch(() => null)
       }, { once: true })
+      lastAutoSave.current = 0
+      retryAfter.current = 0
+      lastResultAt.current = 0
+      setAutoSaveStatus('')
       setRunning(true)
       timerRef.current = setInterval(captureLoop, 160)
     } catch (error) {
@@ -211,23 +255,27 @@ export default function Live() {
     if (videoRef.current) videoRef.current.srcObject = null
     if (canvasRef.current) canvasRef.current.width = 0
     if (!mountedRef.current) return
-    setRunning(false); setResult(null); setFps(0); setSource(null); setModelPct(null); setPromptStatus(''); setStreamAspect(null)
+    setStreamAspect(null)
+    setRunning(false); setResult(null); setFps(0); setSource(null); setModelPct(null); setPromptStatus('')
   }
+  const storeLiveFrame = (result: FrameResult, previewDataUrl: string | undefined, source: 'browser' | 'backend') =>
+    saveBrowserHistory({
+      inputType: 'live',
+      count: result.count,
+      classes: result.unique_classes,
+      avgConfidence: result.avg_confidence,
+      inferenceMs: result.inference_ms,
+      fps: result.fps,
+      model: result.engine || (source === 'backend' ? 'Backend (PyTorch)' : 'In-browser (ONNX)'),
+      previewDataUrl,
+    })
+
   const saveSnapshot = async () => {
     if (!running || !source || !result || savingSnapshot) return
     setSavingSnapshot(true)
     try {
       if (source === 'browser') {
-        await saveBrowserHistory({
-          inputType: 'live',
-          count: result.count,
-          classes: result.unique_classes,
-          avgConfidence: result.avg_confidence,
-          inferenceMs: result.inference_ms,
-          fps: result.fps,
-          model: result.engine || 'In-browser (ONNX)',
-          previewDataUrl: result.annotatedDataUrl,
-        })
+        await storeLiveFrame(result, result.annotatedDataUrl, source)
         toast(`Snapshot saved in this browser · ${result.count} object(s)`)
         return
       }
@@ -272,30 +320,46 @@ export default function Live() {
         <p className="mt-2 text-xs text-slate-500">Camera access requires HTTPS or localhost. The list shows the cameras your browser makes available.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>COCO classes (80)</button>
+          <button className={mode === 'small' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('small')}>Small objects (expanded)</button>
           <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
         </div>
+        {mode === 'small' && <p className="mt-2 text-sm text-slate-400">Looks for small items such as pens and combs using the expanded model. It checks crops of larger frames, so updates are slower. Bring the object close and keep it in focus. For phone cases, try “Any object” and select “phone case”.</p>}
+        <label className="mt-3 flex items-start gap-2 text-sm text-slate-300">
+          <input type="checkbox" className="mt-1 accent-indigo-400" checked={autoSave} onChange={event => {
+            autoSaveRef.current = event.target.checked
+            setAutoSave(event.target.checked)
+            try { localStorage.setItem('ods-auto-save-live', event.target.checked ? 'on' : 'off') }
+            catch { /* Live detection still works with storage disabled. */ }
+            setAutoSaveStatus('')
+          }} />
+          <span>Auto-save live history <span className="text-slate-400">(first detection, then up to once every 30 seconds in this browser)</span></span>
+        </label>
+        {autoSaveStatus && <p role="status" className="mt-2 text-sm text-slate-400">{autoSaveStatus}</p>}
         {mode === 'world' && (
           <div className="mt-3">
             <label className="label">Objects to find (comma-separated, up to 20)</label>
             <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="person, car, dog" aria-label="Object names to detect" />
             <p className="mt-1 text-xs text-slate-500">Searches for the objects you name. With the backend connected this uses YOLO-World (first use downloads its weights and text encoder). Without a backend it runs Grounding DINO in your browser instead (~205 MB download once, slower, experimental — each object checked takes several seconds, so live video is snapshots, not smooth video).</p>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Try an object outside the COCO list">
-              {['microphone', 'sunglasses', 'headphones', 'traffic cone', 'whiteboard', 'coffee mug'].map(p => (
+              {['phone case', 'pen', 'comb', 'microphone', 'sunglasses', 'headphones'].map(p => (
                 <button key={p} type="button" className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs text-violet-200 hover:bg-violet-500/20" onClick={() => setClassesText(p)} title="Try this non-COCO object">{p}</button>
               ))}
             </div>
           </div>
         )}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
-        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
+        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : mode === 'small' ? '~125 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
         {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
-        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Detection runs in your browser. Use Save snapshot to keep the latest result in Detection History.</p>}
+        {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Detection runs in your browser. Use Save snapshot to keep this result immediately.</p>}
         <div ref={stageRef} className="relative mt-4 max-h-[75vh] w-full overflow-hidden rounded-xl border border-white/10 bg-black aspect-video" style={streamAspect ? { aspectRatio: String(streamAspect) } : undefined}>
-          <video ref={videoRef} playsInline muted className="h-full w-full object-contain" />
+          <video ref={videoRef} playsInline muted className="absolute inset-0 h-full w-full object-contain" onResize={event => {
+            const { videoWidth, videoHeight } = event.currentTarget
+            if (videoWidth && videoHeight) setStreamAspect(videoWidth / videoHeight)
+          }} />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
           {!running && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400"><CameraOff size={36} /><p className="px-4 text-center text-sm">Webcam is off — press “Start webcam” to begin real-time detection.</p></div>}
         </div>
-        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Camera frames are sampled up to 6 times per second. Boxes are drawn on the video itself — if nothing is boxed, nothing was recognised in that frame.</p>
+        <p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><Video size={13} /> Camera frames are sampled up to 6 times per second.</p>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="card">
@@ -305,7 +369,7 @@ export default function Live() {
             <p className="flex justify-between"><span className="text-slate-400">Unique classes</span><b>{result?.unique_classes.length ?? 0}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Avg confidence</span><b>{result ? (result.avg_confidence * 100).toFixed(1) + '%' : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Inference time</span><b>{result ? result.inference_ms.toFixed(0) + ' ms' : '—'}</b></p>
-            <p className="flex justify-between"><span className="text-slate-400">Measured FPS</span><b>{fps ? fps.toFixed(1) : '—'}</b></p>
+            <p className="flex justify-between"><span className="text-slate-400">Detection updates / second</span><b>{fps ? fps.toFixed(1) : '—'}</b></p>
             <p className="flex justify-between"><span className="text-slate-400">Engine</span><b>{result?.engine || (source === 'browser' ? 'In-browser (ONNX)' : source === 'backend' ? 'Backend (PyTorch)' : '—')}</b></p>
           </div>
         </div>

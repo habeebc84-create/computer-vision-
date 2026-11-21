@@ -1,12 +1,7 @@
-"""Curated built-in datasets (one-click download + import).
-
-Only official Ultralytics sample datasets are listed, with URLs verified
-live (HTTP 200) before wiring them in. Each zip contains real COCO images
-and real YOLO txt labels — nothing is fabricated or generated here.
-Licence: COCO 2017, CC BY 4.0 (https://cocodataset.org/#termsofuse).
-"""
+"""Curated datasets with real images and bounding-box annotations."""
 import json, shutil, threading, urllib.request, zipfile
 from pathlib import Path
+from objects365_sample import CATEGORIES, IMAGE_IDS, SAMPLE_ID, SAMPLE_SOURCE, import_objects365_sample
 
 BASE = Path(__file__).resolve().parent.parent
 DL_DIR = BASE / "downloads"
@@ -30,6 +25,12 @@ COCO80 = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
           "hair drier", "toothbrush"]
 
 CATALOG = [
+    {"id": SAMPLE_ID,
+     "name": "Objects365 sample",
+     "description": "10 real Objects365 photos with bounding boxes. Use this small sample to check import, annotation, and training.",
+     "images": len(IMAGE_IDS), "classes": len(CATEGORIES), "size_mb": 5.2,
+     "url": SAMPLE_SOURCE,
+     "license": "Objects365 terms and individual image licenses"},
     {"id": "coco128",
      "name": "COCO128",
      "description": "128 images from COCO train 2017 with real YOLO labels across the 80 COCO classes. Recommended for real training — big enough to learn from, small enough to train quickly on CPU.",
@@ -97,7 +98,7 @@ def start_download(ds_id, force=False):
     cur = _load_state(ds_id)
     if cur["status"] == "downloading":
         return status(ds_id)
-    if cur["status"] == "imported" and not force:
+    if cur["status"] == "imported" and (not force or ds_id == SAMPLE_ID):
         return status(ds_id)
     _set_state(ds_id, status="downloading", progress=0, error=None)
     t = threading.Thread(target=_download_and_import, args=(d,), daemon=True)
@@ -109,6 +110,11 @@ def _download_and_import(d):
     zip_path = DL_DIR / f"{ds_id}.zip"
     tmp_dir = DL_DIR / f"{ds_id}_extract"
     try:
+        if ds_id == SAMPLE_ID:
+            count = import_objects365_sample(lambda progress: _set_state(ds_id, progress=progress))
+            _marker_path(ds_id).write_text(json.dumps({"images": count, "labels": count, "source": url}))
+            _set_state(ds_id, status="imported", progress=100, imported_images=count, imported_labels=count, error=None)
+            return
         # --- download (follows redirects; streams so big files don't blow RAM)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=120) as resp:

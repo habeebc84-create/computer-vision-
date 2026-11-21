@@ -238,7 +238,13 @@ For conversion outside the app, see the
 
 ## Built-in datasets (one-click download)
 
-Module 1 — Dataset has a **"Recommended datasets"** section with two official
+**Objects365 sample** downloads ten real annotated images from the
+[public Objects365 sample mirror](https://huggingface.co/datasets/ohjoonhee/Objects365-10BBoxes-Filtered).
+Open Dataset and choose **Download & import** with the backend connected.
+The importer converts boxes to YOLO format and keeps existing class IDs.
+Use this sample to test the workflow. Use the official release for larger training runs.
+
+Module 1 — Dataset also has two official
 Ultralytics COCO samples, verified live (HTTP 200) — click **Download &
 import** and the backend downloads, verifies and imports them into
 `dataset/images/all/` + `dataset/labels/all/`, with class names set to the
@@ -320,7 +326,7 @@ Notes and limits (honest):
   when the window regains focus, and when the browser reports a device change.
   Stop the stream before switching cameras. Frames are sampled up to ~6 fps;
   boxes/labels/confidence are drawn on a canvas overlay with measured FPS
-  and inference ms. Save snapshot stores that frame in history.
+  and inference ms. Auto-save stores the first detected frame and then up to one every 30 seconds in browser history. Save snapshot stores a result immediately. Small objects (expanded) checks cropped regions of larger frames and uses more processing time.
 - **Image Detection** — upload JPG, PNG, WebP, GIF, BMP or AVIF (up to 20 MB),
   run detection, and download the annotated image. Animated images use the first
   frame on the backend. Convert HEIC photos to JPEG before uploading.

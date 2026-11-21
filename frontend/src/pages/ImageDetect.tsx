@@ -112,7 +112,7 @@ export default function ImageDetect() {
       const runDetector = async (): Promise<{ result: ImageResult; source: 'browser' | 'backend' }> => {
         if (mode === 'broad' || mode === 'expanded' || mode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
-          return { result: await detectImageFileInBrowser(file, progress, mode, mode === 'broad' && scanSmallObjects), source: 'browser' as const }
+          return { result: await detectImageFileInBrowser(file, progress, mode, mode !== 'package' && scanSmallObjects), source: 'browser' as const }
         }
         if (mode === 'coco' && customSelected) {
           if (!(await isBackendOnline())) throw new Error(`Start the Python backend to use ${backendModel}.`)
@@ -177,7 +177,7 @@ export default function ImageDetect() {
           ))}
         </div>
         {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
-        {mode === 'broad' && (
+        {(mode === 'broad' || mode === 'expanded') && (
           <label className="mb-3 flex items-start gap-2 text-sm text-slate-300">
             <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-400" checked={scanSmallObjects}
               disabled={busy} onChange={event => setScanSmallObjects(event.target.checked)} />
@@ -192,7 +192,7 @@ export default function ImageDetect() {
             <input className="input" value={classesText} onChange={e => setClassesText(e.target.value)} placeholder="red bus, traffic light, dog" aria-label="Object names to detect" />
             <p className="mt-1 text-xs text-slate-500">Search for objects outside the 80 COCO classes using specific names such as “red bus”. With the backend connected this uses YOLO-World (~25 MB). Without a backend it runs Grounding DINO in your browser instead (~205 MB download once, slower, experimental).</p>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Try an object outside the COCO list">
-              {['microphone', 'sunglasses', 'headphones', 'traffic cone', 'whiteboard', 'coffee mug'].map(p => (
+              {['phone case', 'pen', 'comb', 'microphone', 'sunglasses', 'headphones'].map(p => (
                 <button key={p} type="button" className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs text-violet-200 hover:bg-violet-500/20" onClick={() => setClassesText(p)} title="Try this non-COCO object">{p}</button>
               ))}
             </div>
