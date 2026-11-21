@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { CameraOff, Download, Play, Sparkles, Square, Video } from 'lucide-react'
-import { api, DetectResult, detectWithFallback, isBackendOnline, parseDetectionPrompts, toast } from '../lib/api'
+import { api, DetectResult, detectWithFallback, parseDetectionPrompts, toast } from '../lib/api'
 import { saveBrowserHistory } from '../lib/browserHistory'
 import type { BrowserDetectResult } from '../lib/browserDetection'
 import { DetectionTable } from '../components/ui'
@@ -57,7 +57,7 @@ export default function Live() {
     if (!devices || !mountedRef.current) return
     const cameras = devices.filter(device => device.kind === 'videoinput')
     setDevices(cameras.filter(camera => camera.deviceId))
-    setLabelsHidden(!cameras.some(camera => camera.label))
+    setLabelsHidden(cameras.length > 0 && !cameras.some(camera => camera.label))
     setDeviceId(current => cameras.some(camera => camera.deviceId === current) ? current : '')
   }
 
@@ -65,7 +65,7 @@ export default function Live() {
     mountedRef.current = true
     const refresh = () => { void refreshCameras().catch(() => null) }
     refresh()
-    navigator.mediaDevices?.addEventListener('devicechange', refresh)
+    navigator.mediaDevices?.addEventListener?.('devicechange', refresh)
     window.addEventListener('focus', refresh)
     api.modelStatus().then(m => {
       if (!mountedRef.current) return
@@ -73,23 +73,9 @@ export default function Live() {
       if (file.includes('world')) setMode('world')
       else if (file && !/^yolov8[nsmlx]\.pt$/.test(file)) setBackendModel(file)
     }).catch(() => null)
-    // With no backend, detection runs in this browser. Check which weights the
-    // deployment actually serves and start on one that works, instead of
-    // opening on COCO and failing on the very first frame.
-    void isBackendOnline().then(async online => {
-      if (online || !mountedRef.current) return
-      const { isModelAvailable } = await import('../lib/browserDetection')
-      if (await isModelAvailable('coco')) return
-      if (!mountedRef.current) return
-      if (await isModelAvailable('broad')) return
-      if (!mountedRef.current) return
-      // No bundled weights and no remote COCO export: open vocabulary is the
-      // only path that can still find objects here.
-      setMode('world')
-    }).catch(() => null)
     return () => {
       mountedRef.current = false
-      navigator.mediaDevices?.removeEventListener('devicechange', refresh)
+      navigator.mediaDevices?.removeEventListener?.('devicechange', refresh)
       window.removeEventListener('focus', refresh)
       stop()
     }
@@ -197,7 +183,7 @@ export default function Live() {
       if (res.count === 0 && peak !== undefined && threshold !== undefined) {
         setSilentFrames(frames => {
           const next = frames + 1
-          if (next === 6) {
+          if (next >= 6) {
             setError(
               `The detector is running but nothing has passed the ${(threshold * 100).toFixed(0)}% confidence threshold ` +
               `(best candidate so far: ${(peak * 100).toFixed(0)}%). Point the camera at a familiar object, add light, ` +
@@ -245,7 +231,8 @@ export default function Live() {
     preview ? setEnablingNames(true) : setBusy(true)
     let stream: MediaStream | undefined
     try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access requires HTTPS or localhost.')
+      if (!window.isSecureContext) throw new Error('Camera access requires HTTPS or localhost. Open this page using HTTPS and try again.')
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access is unavailable in this browser or embedded preview. Open this page in a new tab and try again.')
       stream = await navigator.mediaDevices.getUserMedia({
         video: preview ? true : {
           ...(deviceId && { deviceId: { exact: deviceId } }),
@@ -281,7 +268,9 @@ export default function Live() {
       if (!current()) return
       if (!preview) stop()
       const details: Record<string, string> = {
-        NotAllowedError: 'Allow camera access in your browser and device settings, then try again.',
+        NotAllowedError: 'Camera access was blocked. Allow camera access in your browser and device settings. If using an embedded preview, open this page in a new tab and try again.',
+        SecurityError: 'Camera access is blocked by this page or its embedding site. Open this page in a new tab and allow camera access.',
+        AbortError: 'The camera could not start. Close other apps using it and try again.',
         NotFoundError: 'No camera is available. Connect a camera and try again.',
         NotReadableError: 'The camera could not be opened. Close other apps using it and try again.',
         OverconstrainedError: 'The selected camera is unavailable. Choose another camera and try again.',
@@ -367,7 +356,7 @@ export default function Live() {
             <button className="font-semibold underline" onClick={() => openCamera(true)} disabled={enablingNames || busy}>{enablingNames ? 'Asking…' : 'Enable camera names'}</button>
           </p>
         )}
-        <p className="mt-2 text-xs text-slate-500">Camera access requires HTTPS or localhost. The list shows the cameras your browser makes available.</p>
+        <p className="mt-2 text-xs text-slate-500">Camera access requires HTTPS or localhost and browser permission. If the camera is blocked in an embedded preview, <a className="underline text-sky-300" href={window.location.href} target="_blank" rel="noopener noreferrer">open this page in a new tab</a> and allow camera access. The list shows cameras available to your browser.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>{backendModel ? `Backend model (${backendModel})` : 'COCO classes (80)'}</button>
           <button className={mode === 'small' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('small')}>Small objects (expanded)</button>
@@ -402,7 +391,7 @@ export default function Live() {
         {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
         {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Detection runs in your browser. Use Save snapshot to keep this result immediately.</p>}
         <div ref={stageRef} className="relative mt-4 max-h-[75vh] w-full overflow-hidden rounded-xl border border-white/10 bg-black aspect-video" style={streamAspect ? { aspectRatio: String(streamAspect) } : undefined}>
-          <video ref={videoRef} playsInline muted className="absolute inset-0 h-full w-full object-contain" onResize={event => {
+          <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-contain" onResize={event => {
             const { videoWidth, videoHeight } = event.currentTarget
             if (videoWidth && videoHeight) setStreamAspect(videoWidth / videoHeight)
           }} />

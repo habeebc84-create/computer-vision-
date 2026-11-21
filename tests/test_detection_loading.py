@@ -28,6 +28,9 @@ class ModelLoadingTests(unittest.TestCase):
             spec.loader.exec_module(module)
             module.BASE = Path(tmp)
             module.SETTINGS_FILE = Path(tmp) / 'settings.json'
+            # The packaged model must not replace the default general detector.
+            (Path(tmp) / 'models').mkdir()
+            (Path(tmp) / 'models' / 'package-yolov8n.pt').touch()
             manager = module.ModelManager()
             threads = [threading.Thread(target=manager.ensure_loaded) for _ in range(4)]
             for thread in threads: thread.start()
