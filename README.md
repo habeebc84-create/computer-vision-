@@ -10,11 +10,14 @@ results: every bounding box, label and confidence score comes from the model.
 | Image mode | Objects it can find | Where it runs |
 | --- | --- | --- |
 | Everyday objects (365) | YOLOE with the Objects365 vocabulary, including categories such as glasses and sneakers | Browser, with weights bundled in the frontend |
+| Expanded objects (4,585) | A larger prompt-free YOLOE vocabulary | Browser, with a 125 MB first download |
 | Packages (trained) | Parcels, using a YOLOv8n detector fine-tuned on factory package photos | Browser, with weights bundled in the frontend |
 | COCO / selected backend model | The original 80 COCO categories or the labels learned by your selected checkpoint | Python backend, with a browser fallback for COCO |
 | Search by name | Object names you enter as prompts for YOLO-World | Python backend or Grounding DINO in the browser |
 
 Everyday objects is the default on a fresh install. The first frontend build or development launch downloads and verifies the 38 MB Objects365 weights. For a category outside its vocabulary, try Search by name. Small, occluded or unfamiliar objects can still be missed. See the [everyday model details](frontend/public/models/objects365.md) and [package training and held-out results](models/package-model.md).
+
+The expanded option uses the [YOLOE-11l prompt-free ONNX export and matching label list](https://huggingface.co/talmago/yoloe.onnx/tree/4ea526e5f1962d756e5cc7e13360ba5008a0d672) at a pinned revision. See the [original YOLOE project](https://github.com/THU-MIG/yoloe) and [AGPL-3.0 license](frontend/public/models/AGPL-3.0.txt). Choose it in Image Detection for more category coverage. The 365-category model remains the default for faster processing. Larger vocabularies can still miss or mislabel objects.
 
 ## Modules (exactly as specified)
 

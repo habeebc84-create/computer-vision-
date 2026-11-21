@@ -7,7 +7,7 @@ import { DetectionTable } from '../components/ui'
 
 import { COCO_NAMES } from '../lib/yoloPost'
 
-type Mode = 'broad' | 'package' | 'coco' | 'world'
+type Mode = 'broad' | 'expanded' | 'package' | 'coco' | 'world'
 type ImageResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine'>> & { prompts?: string[] }
 
 const COCO_GROUPS: { title: string; items: string[] }[] = [
@@ -110,7 +110,7 @@ export default function ImageDetect() {
         if (total > 0) setModelPct(Math.min(100, Math.round(loaded / total * 100)))
       }
       const runDetector = async (): Promise<{ result: ImageResult; source: 'browser' | 'backend' }> => {
-        if (mode === 'broad' || mode === 'package') {
+        if (mode === 'broad' || mode === 'expanded' || mode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
           return { result: await detectImageFileInBrowser(file, progress, mode, mode === 'broad' && scanSmallObjects), source: 'browser' as const }
         }
@@ -165,6 +165,7 @@ export default function ImageDetect() {
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Detection mode">
           {([
             ['broad', 'Everyday objects (365)'],
+            ['expanded', 'Expanded objects (4,585)'],
             ['package', 'Packages (trained)'],
             ['coco', customSelected ? `Backend model (${backendModel})` : 'COCO classes (80)'],
             ['world', 'Search by name'],
@@ -183,6 +184,7 @@ export default function ImageDetect() {
             <span>Look for small objects <span className="text-slate-400">(slower on large photos)</span></span>
           </label>
         )}
+        {mode === 'expanded' && <p className="my-3 text-sm text-slate-400">Search a larger vocabulary with YOLOE. The first run downloads about 125 MB and can take longer on a phone.</p>}
         {mode === 'package' && <p className="my-3 text-sm text-slate-400">Find packages using a detector fine-tuned on labeled package photos.</p>}
         {mode === 'world' && (
           <div className="mt-3">

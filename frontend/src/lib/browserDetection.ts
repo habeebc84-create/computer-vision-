@@ -4,6 +4,7 @@ import wasmBinaryUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd
 import { COCO_NAMES, MODEL_INPUT_SIZE, letterboxParams, rgbaToTensor, parseDetections, suppressDuplicates, summarise, Detection, getLocalSettings } from './yoloPost'
 
 import { OBJECTS365_NAMES } from './objects365'
+import { EXPANDED_MODEL_URL, expandedLabels, parseExpandedDetections } from './expandedYolo'
 
 export { COCO_NAMES, getLocalSettings }
 
@@ -13,6 +14,7 @@ const CACHE_NAME = 'ods-yolo-model-v2'
 const models = {
   coco: { url: ONNX_MODEL_URL, labels: COCO_NAMES, size: MODEL_INPUT_SIZE },
   broad: { url: import.meta.env.BASE_URL + 'models/objects365.onnx', labels: OBJECTS365_NAMES, size: MODEL_INPUT_SIZE },
+  expanded: { url: EXPANDED_MODEL_URL, labels: [], size: MODEL_INPUT_SIZE },
   package: { url: import.meta.env.BASE_URL + 'models/package.onnx', labels: ['package'], size: 320 },
 }
 export type BrowserModel = keyof typeof models
@@ -41,11 +43,11 @@ export function subscribeBrowserModelState(cb: BrowserModelListener): () => void
 }
 
 async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Promise<ArrayBuffer> {
-  // Remote COCO weights use Cache Storage. Bundled models use the
+  // Remote weights use Cache Storage. Bundled models use the
   // server's HTTP caching policy so a deployment can replace the file.
   const { url } = models[model]
   let cache: Cache | undefined
-  if (model === 'coco') {
+  if (model === 'coco' || model === 'expanded') {
     try {
       cache = await caches.open(CACHE_NAME)
       const hit = await cache.match(url)
@@ -174,8 +176,11 @@ export async function detectInBrowser(
   model: BrowserModel = 'coco',
   scanSmallObjects = false,
 ): Promise<BrowserDetectResult> {
-  const session = await ensureBrowserModel(onProgress, model)
-  const { size, labels } = models[model]
+  const [session, labels] = await Promise.all([
+    ensureBrowserModel(onProgress, model),
+    model === 'expanded' ? expandedLabels() : models[model].labels,
+  ])
+  const { size } = models[model]
   const { conf, iou } = getLocalSettings()
   const duplicateBoxIou = model === 'broad' ? 0.9 : undefined
   let inferenceMs = 0
@@ -189,6 +194,9 @@ export async function detectInBrowser(
       try {
         const output = outputs[session.outputNames[0]]
         inferenceMs += performance.now() - start
+        if (model === 'expanded') {
+          return parseExpandedDetections(output.data as Float32Array, output.dims, labels, width, height, scale, padX, padY, conf, iou)
+        }
         return parseDetections(output.data as Float32Array, width, height, scale, padX, padY, conf, iou, labels, output.dims, duplicateBoxIou)
       } finally {
         Object.values(outputs).forEach(output => output.dispose())
@@ -220,7 +228,7 @@ export async function detectInBrowser(
   return {
     ...summarise(dets, inferenceMs),
     annotatedDataUrl: annotate(source, w, h, dets),
-    engine: ({ broad: 'YOLOE · Objects365', package: 'Package detector', coco: 'YOLOv8n · COCO' })[model],
+    engine: ({ broad: 'YOLOE · Objects365', expanded: 'YOLOE · Expanded', package: 'Package detector', coco: 'YOLOv8n · COCO' })[model],
     source: 'browser',
   }
 }
