@@ -4,8 +4,7 @@ __pycache__/
 .git/
 frontend/node_modules/
 frontend/dist/
-models/*
-!models/package-yolov8n.pt
+models/
 database/
 outputs/
 uploads/

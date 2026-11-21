@@ -2,21 +2,17 @@
 Serves the built React frontend statically and exposes /api/* endpoints.
 Run:  python run.py   ->  http://localhost:8000
 """
-import json, logging, shutil, sqlite3, time, uuid
+import json, shutil, time, uuid
 from pathlib import Path
-from zipfile import BadZipFile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.concurrency import run_in_threadpool
 
-from coco_import import MAX_ARCHIVE_BYTES, import_coco
 from detection import (AVAILABLE_MODELS, load_settings, manager, save_settings,
                      validate_open_vocab_classes, world_manager)
-from dataset_manager import (IMG_ALL, LBL_ALL, MAX_UPLOAD_BYTES, ensure_dirs, get_annotations,
-                             insert_image,
+from dataset_manager import (ALLOWED, IMG_ALL, LBL_ALL, ensure_dirs, get_annotations,
                              get_classes, list_images, save_annotation, set_classes,
                              split_dataset, stats, export_zip)
 from model_training import job as train_job
@@ -72,8 +68,6 @@ def models_available():
     for m in AVAILABLE_MODELS:
         entry = dict(m)
         entry["downloaded"] = (BASE / m["path"]).exists()
-        if m["kind"] == "trained" and not entry["downloaded"]:
-            continue
         if m["kind"] == "world":
             entry["loaded"] = world_manager.model is not None
         out.append(entry)
@@ -89,10 +83,11 @@ def post_settings(payload: dict):
     if "conf" in patch: patch["conf"] = max(0.05, min(0.95, float(patch["conf"])))
     if "iou" in patch: patch["iou"] = max(0.1, min(0.95, float(patch["iou"])))
     if "imgsz" in patch: patch["imgsz"] = int(patch["imgsz"])
+    s = save_settings(patch)
     if "model_path" in patch:
         try: manager.load(patch["model_path"])
-        except Exception as e: raise HTTPException(400, f"Model failed to load: {e}")
-    return save_settings(patch)
+        except Exception as e: raise HTTPException(400, f"Settings saved but model failed to load: {e}")
+    return s
 
 # ---------- Detection ----------
 def _summary(dets, ms):
@@ -102,37 +97,24 @@ def _summary(dets, ms):
             "inference_ms": round(ms, 1),
             "fps": round(1000/max(ms, 0.01), 1)}
 
-def _store_detection(kind, annotated, dets, ms, model):
-    name = f"{kind}_{uuid.uuid4().hex}.jpg"
-    path = OUT_IMG / name
-    output_path = f"outputs/images/{name}"
-    try:
-        path.write_bytes(encode_jpeg(annotated))
-        record_id = analytics.record(kind, dets, fps=1000/max(ms, .01), inference_ms=ms,
-                                     output_path=output_path, model=model or "")
-    except (OSError, sqlite3.Error) as exc:
-        logging.getLogger(__name__).exception("Could not save a detection record")
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            logging.getLogger(__name__).exception("Could not remove an incomplete detection output")
-        if kind == "live":
-            raise HTTPException(503, "Snapshot could not be saved to history. Check backend storage.") from exc
-        return {"history_error": "Detection completed, but history storage is unavailable."}
-    return {"record_id": record_id, "annotated_url": f"/{output_path}"}
-
 @app.post("/api/detect/image")
 async def detect_image(file: UploadFile = File(...)):
-    data = await file.read(20*1024*1024 + 1)
+    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
+        raise HTTPException(400, "Upload a JPG or PNG image.")
+    data = await file.read()
     if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
     try: img = decode_image(data)
     except ValueError as e: raise HTTPException(400, str(e))
     try: dets, ms = manager.detect_array(img)
     except Exception as e: raise HTTPException(503, f"Model error: {e}")
     annotated = manager.annotate(img, dets)
+    name = f"{int(time.time())}_{Path(file.filename or 'image').stem}.jpg"
+    (OUT_IMG / name).write_bytes(encode_jpeg(annotated))
+    rid = analytics.record("image", dets, fps=1000/max(ms, .01), inference_ms=ms,
+                           output_path=f"outputs/images/{name}", model=manager.model_path or "")
     out = _summary(dets, ms)
-    out.update(_store_detection("image", annotated, dets, ms, manager.model_path))
-    out["original_name"] = file.filename
+    out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}",
+                "original_name": file.filename})
     return out
 
 @app.post("/api/detect/frame")
@@ -174,7 +156,9 @@ async def detect_open_vocab_image(file: UploadFile = File(...), classes: str = F
     in `classes`. Real inference only — a missing/unreachable world model is
     a clear 503, never invented boxes."""
     prompts = _parse_classes(classes)
-    data = await file.read(20*1024*1024 + 1)
+    if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
+        raise HTTPException(400, "Upload a JPG or PNG image.")
+    data = await file.read()
     if len(data) > 20*1024*1024: raise HTTPException(400, "Image larger than 20 MB.")
     try: img = decode_image(data)
     except ValueError as e: raise HTTPException(400, str(e))
@@ -182,9 +166,14 @@ async def detect_open_vocab_image(file: UploadFile = File(...), classes: str = F
     except RuntimeError as e: raise HTTPException(503, str(e))
     except Exception as e: raise HTTPException(503, f"Model error: {e}")
     annotated = manager.annotate(img, dets)
+    name = f"{int(time.time())}_{Path(file.filename or 'image').stem}_world.jpg"
+    (OUT_IMG / name).write_bytes(encode_jpeg(annotated))
+    rid = analytics.record("open-vocab", dets, fps=1000/max(ms, .01), inference_ms=ms,
+                           output_path=f"outputs/images/{name}",
+                           model=world_manager.model_path or "models/yolov8s-worldv2.pt")
     out = _summary(dets, ms)
-    out.update(_store_detection("open-vocab", annotated, dets, ms, world_manager.model_path))
-    out.update({"original_name": file.filename, "prompts": prompts})
+    out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}",
+                "original_name": file.filename, "prompts": prompts})
     return out
 
 @app.post("/api/detect/open-vocab/frame")
@@ -204,47 +193,27 @@ async def detect_open_vocab_frame(frame: UploadFile = File(...), classes: str = 
     return out
 
 @app.post("/api/detect/frame/save")
-async def save_frame(frame: UploadFile = File(...), classes: str | None = Form(None)):
-    prompts = _parse_classes(classes) if classes is not None else None
+async def save_frame(frame: UploadFile = File(...)):
     data = await frame.read()
-    try: img = decode_image(data)
-    except ValueError as e: raise HTTPException(400, str(e))
-    try:
-        if prompts is None:
-            dets, ms = manager.detect_array(img)
-            model_path = manager.model_path
-        else:
-            dets, ms = world_manager.detect_array(img, prompts)
-            model_path = world_manager.model_path
-    except Exception as e: raise HTTPException(503, f"Model error: {e}")
-    out = _summary(dets, ms)
-    out.update(_store_detection("live", manager.annotate(img, dets), dets, ms, model_path))
+    img = decode_image(data)
+    dets, ms = manager.detect_array(img)
+    name = f"live_{int(time.time())}.jpg"
+    (OUT_IMG / name).write_bytes(encode_jpeg(manager.annotate(img, dets)))
+    rid = analytics.record("live", dets, fps=1000/max(ms, .01), inference_ms=ms,
+                           output_path=f"outputs/images/{name}", model=manager.model_path or "")
+    out = _summary(dets, ms); out.update({"record_id": rid, "annotated_url": f"/outputs/images/{name}"})
     return out
 
 # ---------- Video ----------
 @app.post("/api/video/start")
 async def video_start(file: UploadFile = File(...)):
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in {".mp4", ".avi", ".mov", ".webm"}:
-        raise HTTPException(400, "Upload an MP4, AVI, MOV or WebM video.")
+    if file.content_type not in ("video/mp4", "video/avi", "video/quicktime", "video/x-msvideo"):
+        raise HTTPException(400, "Upload an MP4, AVI or MOV video.")
     jid = uuid.uuid4().hex[:12]
-    src = UP / f"{jid}{suffix}"
-    if file.size == 0:
-        raise HTTPException(400, "The video file is empty.")
-    if file.size is not None and file.size > 100 * 1024 * 1024:
-        raise HTTPException(413, "Video exceeds 100 MB.")
-    try:
-        with src.open("wb") as output:
-            while chunk := await file.read(1024 * 1024):
-                output.write(chunk)
-        dst = OUT_VID / f"{jid}_detected.mp4"
-        job = VideoJob(jid, src, dst, manager)
-        video_jobs[jid] = job
-        job.start()
-    except Exception:
-        src.unlink(missing_ok=True)
-        video_jobs.pop(jid, None)
-        raise
+    src = UP / f"{jid}_{Path(file.filename or 'video').name}"
+    src.write_bytes(await file.read())
+    dst = OUT_VID / f"{jid}_detected.mp4"
+    job = VideoJob(jid, src, dst, manager); video_jobs[jid] = job; job.start()
     return {"job_id": jid}
 
 @app.get("/api/video/{jid}")
@@ -252,26 +221,19 @@ def video_status(jid: str):
     j = video_jobs.get(jid)
     if not j: raise HTTPException(404, "Video job not found.")
     s = j.snapshot()
-    if s["status"] == "completed":
-        with j.record_lock:
-            if not j.recorded:
-                summ = s["summary"]
-                try:
-                    analytics.record_summary("video", summ["objects"], list(summ["per_class"]),
-                                             fps=s["fps"], output_path=f"outputs/videos/{jid}_detected.mp4",
-                                             model=manager.model_path or "")
-                    j.recorded = True
-                except (OSError, sqlite3.Error):
-                    logging.getLogger(__name__).exception("Could not save video history")
-                    s["history_error"] = "Processed video is ready, but history storage is unavailable."
+    if s["status"] == "completed" and not getattr(j, "_recorded", False):
+        j._recorded = True
+        summ = s.get("summary") or {}
+        analytics.record_summary("video", summ.get("objects", 0),
+                                 list((summ.get("per_class") or {}).keys()),
+                                 fps=s["fps"], output_path=f"outputs/videos/{jid}_detected.mp4",
+                                 model=manager.model_path or "")
     return s
 
 @app.get("/api/video/{jid}/download")
 def video_download(jid: str):
     p = OUT_VID / f"{jid}_detected.mp4"
-    job = video_jobs.get(jid)
-    if (job and job.status != "completed") or not p.is_file():
-        raise HTTPException(404, "Processed video not ready yet.")
+    if not p.exists(): raise HTTPException(404, "Processed video not ready yet.")
     return FileResponse(p, media_type="video/mp4", filename=f"detected_{jid}.mp4")
 
 # ---------- Dataset ----------
@@ -281,34 +243,15 @@ def ds_stats(): return stats()
 @app.get("/api/dataset/images")
 def ds_images(): return list_images()
 
-@app.post("/api/dataset/import-coco")
-async def ds_import_coco(file: UploadFile = File(...)):
-    if file.size is not None and file.size > MAX_ARCHIVE_BYTES:
-        raise HTTPException(413, "Dataset ZIP exceeds 100 MB. Import a smaller subset.")
-    try:
-        return await run_in_threadpool(import_coco, file.file)
-    except (BadZipFile, KeyError, TypeError, AttributeError, ValueError) as exc:
-        raise HTTPException(400, f"Invalid COCO dataset ZIP: {exc}") from exc
-
 @app.post("/api/dataset/upload")
 async def ds_upload(files: list[UploadFile] = File(...)):
-    ensure_dirs()
-    saved, skipped, errors = [], [], []
-    for file in files:
-        name = file.filename or "image"
-        try:
-            data = await file.read(MAX_UPLOAD_BYTES + 1)
-            if len(data) > MAX_UPLOAD_BYTES:
-                raise ValueError("Image exceeds 20 MB.")
-            saved.append(await run_in_threadpool(insert_image, name, data))
-        except ValueError as exc:
-            skipped.append(name)
-            errors.append({"file": name, "message": str(exc)})
-        except OSError:
-            logging.getLogger(__name__).exception("Could not store a dataset image")
-            skipped.append(name)
-            errors.append({"file": name, "message": "The backend could not write the image. Check available storage."})
-    return {"saved": saved, "skipped": skipped, "errors": errors, "stats": stats()}
+    ensure_dirs(); saved, skipped = [], []
+    for f in files:
+        ext = Path(f.filename or "").suffix.lower()
+        if ext not in ALLOWED: skipped.append(f.filename); continue
+        dest = IMG_ALL / Path(f.filename).name
+        dest.write_bytes(await f.read()); saved.append(f.filename)
+    return {"saved": saved, "skipped": skipped, "stats": stats()}
 
 @app.delete("/api/dataset/images/{name}")
 def ds_delete(name: str):
@@ -333,7 +276,6 @@ def ds_get_ann(name: str):
 def ds_set_ann(name: str, payload: dict):
     try: n = save_annotation(name, payload.get("boxes", []))
     except FileNotFoundError: raise HTTPException(404, "Image not found.")
-    except (TypeError, KeyError, ValueError) as exc: raise HTTPException(400, "Invalid annotation boxes.") from exc
     return {"saved": n, "stats": stats()}
 
 @app.post("/api/dataset/split")

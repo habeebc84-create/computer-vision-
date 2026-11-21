@@ -93,7 +93,7 @@ export async function detectOpenVocabInBrowser(
   onPrompt?: (done: number, total: number, prompt: string) => void,
 ): Promise<BrowserDetectResult> {
   const detector = await ensureOpenVocabModel(onProgress)
-  const { conf, iou: overlapThreshold } = getLocalSettings()
+  const { conf } = getLocalSettings()
   const threshold = Math.max(0.1, Math.min(conf, 0.9))
   const canvas = toCanvas(source, w, h)
   // One detector call PER prompt. This is deliberate, verified in the Node
@@ -128,12 +128,12 @@ export async function detectOpenVocabInBrowser(
     }
   }
   // Highest confidence first, then drop near-duplicate boxes for the SAME
-  // prompt using the configured IoU threshold. The same box under two different prompts is kept —
+  // prompt (IoU > 0.5). The same box under two different prompts is kept —
   // the object genuinely matches both descriptions.
   dets.sort((a, b) => b.confidence - a.confidence)
   const kept: Detection[] = []
   for (const d of dets) {
-    if (kept.some(k => k.class_id === d.class_id && iou(k.bbox, d.bbox) > overlapThreshold)) continue
+    if (kept.some(k => k.class_id === d.class_id && iou(k.bbox, d.bbox) > 0.5)) continue
     kept.push(d)
   }
   return {

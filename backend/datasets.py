@@ -132,7 +132,7 @@ def _download_and_import(d):
             z.extractall(tmp_dir)
         _set_state(ds_id, progress=75)
         # --- import: find every image, pair it with its YOLO txt label
-        from dataset_manager import IMG_ALL, LBL_ALL, ensure_dirs, get_classes, set_classes
+        from dataset_manager import IMG_ALL, LBL_ALL, ensure_dirs, set_classes
         ensure_dirs()
         label_by_stem = {}
         for p in tmp_dir.rglob("*.txt"):
@@ -141,11 +141,6 @@ def _download_and_import(d):
                   if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
         if not images:
             raise ValueError("Zip contained no images.")
-        # Append COCO classes without changing the meaning of existing project labels.
-        classes = get_classes()
-        classes.extend(name for name in COCO80 if name not in classes)
-        coco_to_project = [classes.index(name) for name in COCO80]
-        set_classes(classes)
         n_img = n_lbl = 0
         for img in sorted(images):
             dest = IMG_ALL / img.name
@@ -153,13 +148,10 @@ def _download_and_import(d):
             n_img += 1
             lab = label_by_stem.get(img.stem)
             if lab is not None:
-                labels = []
-                for line in lab.read_text().splitlines():
-                    if line.strip():
-                        class_id, coords = line.split(maxsplit=1)
-                        labels.append(f"{coco_to_project[int(class_id)]} {coords}")
-                (LBL_ALL / (img.stem + ".txt")).write_text("\n".join(labels))
+                shutil.copy2(lab, LBL_ALL / (img.stem + ".txt"))
                 n_lbl += 1
+        # The labels use COCO class ids 0-79 — set the project classes to match.
+        set_classes(COCO80)
         _marker_path(ds_id).write_text(json.dumps(
             {"images": n_img, "labels": n_lbl, "source": url}))
         _set_state(ds_id, status="imported", progress=100,

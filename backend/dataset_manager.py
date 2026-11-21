@@ -5,12 +5,6 @@ alongside the image in dataset/labels/all/ until split, plus a JSON sidecar
 for the annotation editor."""
 import json, random, shutil, zipfile
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from uuid import uuid4
-
-import cv2
-
-from image_processing import decode_image
 
 BASE = Path(__file__).resolve().parent.parent
 DS = BASE / "dataset"
@@ -23,38 +17,6 @@ def ensure_dirs():
     for d in [IMG_ALL, LBL_ALL, DS/"images"/"train", DS/"images"/"val",
               DS/"labels"/"train", DS/"labels"/"val"]:
         d.mkdir(parents=True, exist_ok=True)
-
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-
-def insert_image(filename, data):
-    """Store a validated image with its own YOLO label stem."""
-    img = decode_image(data)
-    original = Path(filename.replace("\\", "/")).name
-    stem = Path(original).stem[:120] or "image"
-    # Normalize to PNG so training and annotation read the same pixels and orientation.
-    ok, encoded = cv2.imencode(".png", img)
-    if not ok:
-        raise ValueError("Could not encode the image.")
-
-    with NamedTemporaryFile(dir=IMG_ALL, suffix=".tmp", delete=False) as temp:
-        staged = Path(temp.name)
-    try:
-        staged.write_bytes(encoded.tobytes())
-        existing_stems = {path.stem.casefold() for path in IMG_ALL.iterdir()
-                          if path.suffix.lower() in ALLOWED}
-        existing_stems.update(path.stem.casefold() for path in LBL_ALL.glob("*.txt"))
-        candidate = stem
-        if candidate.casefold() in existing_stems:
-            candidate = f"{stem}_{uuid4().hex[:12]}"
-        while True:
-            destination = IMG_ALL / f"{candidate}.png"
-            try:
-                destination.hardlink_to(staged)
-                return destination.name
-            except FileExistsError:
-                candidate = f"{stem}_{uuid4().hex[:12]}"
-    finally:
-        staged.unlink(missing_ok=True)
 
 def get_classes():
     if CLASSES_FILE.exists():
@@ -71,6 +33,7 @@ def list_images():
     out = []
     for p in sorted(IMG_ALL.glob("*")):
         if p.suffix.lower() in ALLOWED:
+            import cv2
             img = cv2.imread(str(p))
             h, w = (img.shape[:2] if img is not None else (0, 0))
             lab = LBL_ALL / (p.stem + ".txt")
@@ -84,6 +47,7 @@ def list_images():
 def save_annotation(image_name, boxes):
     """boxes: [{class_id, x_min,y_min,x_max,y_max}] in pixels. Writes YOLO txt."""
     ensure_dirs()
+    import cv2
     img = cv2.imread(str(IMG_ALL / image_name))
     if img is None: raise FileNotFoundError(f"Image not found: {image_name}")
     h, w = img.shape[:2]
@@ -97,6 +61,7 @@ def save_annotation(image_name, boxes):
     return len(lines)
 
 def get_annotations(image_name):
+    import cv2
     img = cv2.imread(str(IMG_ALL / image_name))
     if img is None: raise FileNotFoundError(image_name)
     h, w = img.shape[:2]
@@ -138,13 +103,13 @@ def split_dataset(train_pct=80):
     ensure_dirs()
     imgs = list_images()
     if not imgs: raise ValueError("No images uploaded yet — upload images first.")
-    if len(imgs) < 2: raise ValueError("A train/validation split needs at least two images.")
     classes = get_classes()
     if not classes: raise ValueError("No classes defined — add at least one class first.")
     missing = [i["name"] for i in imgs if i["annotations"] == 0]
     rng = random.Random(42); pool = imgs[:]; rng.shuffle(pool)
-    n_train = max(1, min(len(pool) - 1, round(len(pool) * train_pct / 100)))
+    n_train = max(1, round(len(pool) * train_pct / 100)) if len(pool) > 1 else 1
     train, val = pool[:n_train], pool[n_train:]
+    if not val and len(pool) > 1: val, train = [train[-1]], train[:-1]
     for sub in ("train", "val"):
         for p in (DS/"images"/sub).glob("*"): p.unlink()
         for p in (DS/"labels"/sub).glob("*"): p.unlink()

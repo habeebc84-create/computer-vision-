@@ -24,6 +24,3 @@ outputs/
 runs/
 settings.json
 uploads/
-
-frontend/public/models/objects365.onnx
-frontend/public/models/.download-*/
