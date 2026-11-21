@@ -9,6 +9,16 @@ from dataset_manager import MAX_UPLOAD_BYTES, ensure_dirs, get_classes, insert_i
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 
 
+def image_file_name(image):
+    """File name for one COCO-format image entry. LVIS v1 has no file_name —
+    its images carry coco_url instead (e.g. .../val2017/000000397133.jpg)."""
+    name = (image.get("file_name") or "").strip()
+    if not name:
+        url = (image.get("coco_url") or "").strip()
+        name = PurePosixPath(url).name if url else ""
+    return name or f"{image.get('id')}.jpg"
+
+
 def import_coco(archive):
     from dataset_manager import LBL_ALL
 
@@ -26,10 +36,17 @@ def import_coco(archive):
             raise ValueError("The dataset must contain images and named categories.")
 
         existing = get_classes()
-        classes = list(dict.fromkeys([*existing, *categories.values()]))
-        # Preserve existing indices even if older projects contain duplicate names.
-        classes = existing + [name for name in classes if name not in existing]
-        indices = {category: classes.index(name) for category, name in categories.items()}
+        classes = list(existing)
+        class_ids = {}
+        for i, name in enumerate(classes):
+            class_ids.setdefault(name.casefold(), i)
+        indices = {}
+        for category, name in categories.items():
+            key = name.casefold()
+            if key not in class_ids:
+                class_ids[key] = len(classes)
+                classes.append(name)
+            indices[category] = class_ids[key]
         labels = {image_id: [] for image_id in images}
         for annotation in doc["annotations"]:
             image = images[annotation["image_id"]]
@@ -58,7 +75,7 @@ def import_coco(archive):
         saved, skipped = [], []
         set_classes(classes)
         for image_id, image in images.items():
-            name = PurePosixPath(image["file_name"]).name
+            name = PurePosixPath(image_file_name(image)).name
             entry = files.get(name)
             if entry is None or entry.file_size > MAX_UPLOAD_BYTES:
                 skipped.append(name)

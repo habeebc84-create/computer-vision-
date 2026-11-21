@@ -244,27 +244,89 @@ Open Dataset and choose **Download & import** with the backend connected.
 The importer converts boxes to YOLO format and keeps existing class IDs.
 Use this sample to test the workflow. Use the official release for larger training runs.
 
-Module 1 — Dataset also has two official
-Ultralytics COCO samples, verified live (HTTP 200) — click **Download &
+Module 1 — Dataset has eleven one-click datasets. Click **Download &
 import** and the backend downloads, verifies and imports them into
-`dataset/images/all/` + `dataset/labels/all/`, with class names set to the
-80 COCO classes. Then Split the dataset and train in Module 2 as usual.
+`dataset/images/all/` + `dataset/labels/all/`, with class names set to
+that dataset's own classes. Then Split the dataset and train in Module 2
+as usual. Every URL below was verified live (HTTP 200) on 21 Nov 2026.
+Downloads run on the Python backend — they only work with the backend
+running locally, not on the hosted site.
 
-| Dataset | Images | Classes | Size | Licence |
-|---|---|---|---|---|
-| COCO128 | 128 | 80 (COCO) | ~6.7 MB | COCO 2017, CC BY 4.0 |
-| COCO8 | 8 (4 train / 4 val) | 80 (COCO) | ~0.4 MB | COCO 2017, CC BY 4.0 |
+To fine-tune for small everyday objects, import **Open Images · Pens and
+phones** (60 photos with original pen and cell-phone boxes from [Open
+Images](https://storage.googleapis.com/openimages/web/download_v7.html)) and
+**Wikimedia Commons · Combs and phone cases** (12 photos with hand-labeled boxes).
+The repository records the [Open Images photo credits](backend/data/open-images-pen-phone.json)
+and [Wikimedia Commons photo credits](backend/data/commons-combs-phone-cases.json).
+The samples are a starting point. For accuracy on your camera, add labeled photos at different
+distances, angles, and lighting, plus confirmed backgrounds.
 
-- COCO128 — `https://ultralytics.com/assets/coco128.zip` — recommended for
-  real training: big enough to learn from, small enough to train on CPU.
-- COCO8 — `https://ultralytics.com/assets/coco8.zip` — tiny smoke test for
-  the download → split → train pipeline.
-- Source: Ultralytics (redirects to GitHub releases). No labels or images are
-  invented — the zips contain real COCO images and real YOLO txt labels.
-- Downloaded zips live in `downloads/` and imported files in
+Save boxes before splitting. A saved empty annotation marks an intentional background.
+The split excludes unreviewed photos and exact duplicate files, and keeps examples of every
+labeled class in training. It reports classes with no validation coverage so you know which
+objects the metrics cover. Split again after changing the dataset.
+After training, select **Load as active model**, then use **Backend model**
+in Image or Live Detection. For uploaded videos, use **Backend · all frames**.
+
+| Dataset | Images | Classes | Size | Format | Licence |
+|---|---|---|---|---|---|
+| Open Images · Pens and phones | 60 | 2 | ~30 MB | sample | Open Images annotations (CC BY 4.0) |
+| Wikimedia Commons · Combs and phone cases | 12 | 2 | ~2 MB | sample | Per-image Creative Commons attribution |
+| Objects365 sample | 10 | 46 | ~5 MB | sample | Objects365 terms |
+| COCO128 | 128 | 80 (COCO) | ~6.7 MB | YOLO txt | COCO 2017, CC BY 4.0 |
+| COCO8 | 8 (4 train / 4 val) | 80 (COCO) | ~0.4 MB | YOLO txt | COCO 2017, CC BY 4.0 |
+| COCO 2017 validation | 5,000 | 80 (COCO) | ~1.0 GB | COCO JSON | COCO 2017, CC BY 4.0 |
+| Pascal VOC 2012 trainval | 11,530 | 20 | ~1.9 GB | VOC XML | Research use |
+| Pascal VOC 2007 trainval | 5,011 | 20 | ~439 MB | VOC XML | Research use |
+| WIDER FACE train | 12,880 | 1 (face) | ~1.4 GB | WIDER txt | Non-commercial research |
+| VisDrone2019-DET train | 6,471 | 10 | ~1.4 GB | VisDrone txt | Non-commercial research |
+| VisDrone2019-DET val | 548 | 10 | ~72 MB | VisDrone txt | Non-commercial research |
+
+- COCO 2017 validation — images `http://images.cocodataset.org/zips/val2017.zip`
+  + annotations `http://images.cocodataset.org/annotations/annotations_trainval2017.zip`
+  (the importer uses `instances_val2017.json`).
+- Pascal VOC 2012 — `http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar`
+  (VOC 2007: `.../voc2007/VOCtrainval_06-Nov-2007.tar`). The importer reads
+  the `Annotations/*.xml` files and skips objects marked difficult.
+- WIDER FACE train — images from the Hugging Face mirror
+  `https://huggingface.co/datasets/wider_face/resolve/main/data/WIDER_train.zip`
+  + annotations `.../wider_face_split.zip` (`wider_face_train_bbx_gt.txt`).
+  Faces flagged invalid are skipped.
+- VisDrone2019-DET — `https://github.com/ultralytics/yolov5/releases/download/v1.0/VisDrone2019-DET-train.zip`
+  (and `-val.zip`). Annotation rows with a non-zero score are ignored
+  regions and are skipped, as in the Ultralytics converter.
+- Source: the zips contain real images and real labels — nothing is
+  invented. Downloaded archives live in `downloads/` and imported files in
   `dataset/images/all/` + `dataset/labels/all/` — all git-ignored, so they
   are never committed. Re-downloading an imported dataset is skipped unless
   you choose Re-download.
+
+### More datasets — download from the official site
+
+These are too large, or need registration, for a one-click download, so the
+Dataset page links to their official download pages instead of downloading
+them. They are listed in the same catalog (`GET /api/datasets`).
+
+| Dataset | Images | Classes | Size | How to get it |
+|---|---|---|---|---|
+| COCO 2017 train | 118,287 | 80 | ~18 GB | `http://images.cocodataset.org/zips/train2017.zip` (+ annotations zip) |
+| LVIS v1 train | 100,170 | 1,203 | ~18 GB + 334 MB annotations | `https://dl.fbaipublicfiles.com/LVIS/lvis_v1_train.json.zip` + COCO train2017 images |
+| LVIS v1 val | 19,809 | 1,203 | ~19 GB + 61 MB annotations | `https://dl.fbaipublicfiles.com/LVIS/lvis_v1_val.json.zip` + COCO train2017 + val2017 images |
+| Open Images V7 | 1,743,042 (train) | 600 boxable | ~561 GB | `https://storage.googleapis.com/openimages/web/download_v7.html` (CC BY 2.0) |
+| BDD100K | 100,000 | 10 | ~7.1 GB | `https://bdd-data.berkeley.edu/` — registration required |
+| SKU-110K | 11,762 | 1 (object) | ~13.6 GB | `https://github.com/eg4000/SKU110K_CVPR19` — academic / non-commercial |
+| Objects365 (full) | ~2 million | 365 | see official site | `https://www.objects365.org/download.html` — see “Objects365 training data” above |
+
+- LVIS v1 annotations are COCO-format, so once the COCO images are
+  downloaded, import them with Dataset → Import annotated ZIP. LVIS images
+  have no `file_name` — the importer reads the name from `coco_url`.
+  Verified on the real `lvis_v1_val.json` (21 Nov 2026): 1,203 classes,
+  19,809 images, all 244,707 boxes convert to YOLO labels. LVIS val spans
+  COCO train2017 (15,000 images) and val2017 (4,809), which is why it is
+  not a one-click download.
+- BDD100K's site could not be reached from this environment when checked
+  (21 Nov 2026); the registration requirement is confirmed by the FiftyOne
+  dataset docs.
 
 For development with hot reload instead of the built frontend:
 

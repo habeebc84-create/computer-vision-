@@ -33,6 +33,7 @@ export default function Live() {
   const [busy, setBusy] = useState(false)
   const [savingSnapshot, setSavingSnapshot] = useState(false)
   const [mode, setMode] = useState<'coco' | 'small' | 'world'>('coco')
+  const [backendModel, setBackendModel] = useState('')
   const [autoSave, setAutoSave] = useState(() => {
     try { return localStorage.getItem('ods-auto-save-live') !== 'off' }
     catch { return true }
@@ -49,6 +50,7 @@ export default function Live() {
   // Refs so the interval callback always reads the latest mode/prompts.
   const modeRef = useRef(mode); modeRef.current = mode
   const classesRef = useRef(classesText); classesRef.current = classesText
+  const backendModelRef = useRef(backendModel); backendModelRef.current = backendModel
 
   const refreshCameras = async () => {
     const devices = await navigator.mediaDevices?.enumerateDevices()
@@ -65,7 +67,12 @@ export default function Live() {
     refresh()
     navigator.mediaDevices?.addEventListener('devicechange', refresh)
     window.addEventListener('focus', refresh)
-    api.modelStatus().then(m => { if (mountedRef.current && m?.model_path?.includes('world')) setMode('world') }).catch(() => null)
+    api.modelStatus().then(m => {
+      if (!mountedRef.current) return
+      const file = m.model_path?.split(/[/\\]/).pop() || ''
+      if (file.includes('world')) setMode('world')
+      else if (file && !/^yolov8[nsmlx]\.pt$/.test(file)) setBackendModel(file)
+    }).catch(() => null)
     // With no backend, detection runs in this browser. Check which weights the
     // deployment actually serves and start on one that works, instead of
     // opening on COCO and failing on the very first frame.
@@ -153,13 +160,17 @@ export default function Live() {
         const result = await detectInBrowser(frame, frame.width, frame.height, progress, 'expanded', true)
         return { result, source: 'browser' as const }
       }
-      const { result: res, source } = await (mode === 'small' ? runSmallObjects() : detectWithFallback<FrameResult>(
-        async () => {
-          const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.85))
-          if (!blob) throw new Error('Could not encode the camera frame.')
-          return prompts ? api.openVocabFrame(blob, prompts) : api.detectFrame(blob)
-        },
-        async () => {
+      const runBackend = async (): Promise<FrameResult> => {
+        const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.85))
+        if (!blob) throw new Error('Could not encode the camera frame.')
+        return prompts ? api.openVocabFrame(blob, prompts) : api.detectFrame(blob)
+      }
+      const runDetection = async () => {
+        if (mode === 'small') return runSmallObjects()
+        if (mode === 'coco' && backendModelRef.current) {
+          return { result: await runBackend(), source: 'backend' as const }
+        }
+        return detectWithFallback<FrameResult>(runBackend, async () => {
           if (prompts) {
             const { detectOpenVocabInBrowser } = await import('../lib/browserOpenVocab')
             return detectOpenVocabInBrowser(frame, frame.width, frame.height, prompts, progress,
@@ -169,8 +180,9 @@ export default function Live() {
           }
           const { detectInBrowser } = await import('../lib/browserDetection')
           return detectInBrowser(frame, frame.width, frame.height, progress)
-        },
-      ))
+        })
+      }
+      const { result: res, source } = await runDetection()
       if (!current()) return
       const now = performance.now()
       setFps(lastResultAt.current ? 1000 / (now - lastResultAt.current) : 0)
@@ -357,7 +369,7 @@ export default function Live() {
         )}
         <p className="mt-2 text-xs text-slate-500">Camera access requires HTTPS or localhost. The list shows the cameras your browser makes available.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>COCO classes (80)</button>
+          <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>{backendModel ? `Backend model (${backendModel})` : 'COCO classes (80)'}</button>
           <button className={mode === 'small' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('small')}>Small objects (expanded)</button>
           <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
         </div>

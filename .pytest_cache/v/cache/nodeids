@@ -1,0 +1,4 @@
+[
+  "tests/test_dataset_split.py::test_class_order_and_annotation_coordinates_are_checked",
+  "tests/test_dataset_split.py::test_split_excludes_unreviewed_and_duplicates_and_protects_rare_class"
+]
