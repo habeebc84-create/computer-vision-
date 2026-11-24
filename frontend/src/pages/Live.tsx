@@ -5,7 +5,7 @@ import { saveBrowserHistory } from '../lib/browserHistory'
 import type { BrowserDetectResult } from '../lib/browserDetection'
 import { DetectionTable } from '../components/ui'
 
-type FrameResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine' | 'peak_confidence' | 'conf_threshold'>>
+type FrameResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine' | 'modelNotice' | 'peak_confidence' | 'conf_threshold'>>
 
 export default function Live() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -390,6 +390,7 @@ export default function Live() {
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : mode === 'small' ? '~125 MB' : mode === 'broad' ? '~38 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
         {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
+        {result?.modelNotice && <p role="status" className="mt-3 text-sm text-amber-200">{result.modelNotice}</p>}
         {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Detection runs in your browser. Use Save snapshot to keep this result immediately.</p>}
         <div ref={stageRef} className="relative mt-4 max-h-[75vh] w-full overflow-hidden rounded-xl border border-white/10 bg-black aspect-video" style={streamAspect ? { aspectRatio: String(streamAspect) } : undefined}>
           <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-contain" onResize={event => {
