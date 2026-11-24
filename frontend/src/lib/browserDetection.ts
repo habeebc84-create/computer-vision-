@@ -189,8 +189,11 @@ async function download(url: string, onProgress?: Progress): Promise<ArrayBuffer
   return bytes.buffer
 }
 
-async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Promise<ArrayBuffer> {
+async function loadBrowserSession(model: BrowserModel, onProgress?: Progress): Promise<ort.InferenceSession> {
   const spec = models[model]
+  const createSession = (bytes: ArrayBuffer) => ort.InferenceSession.create(bytes, {
+    executionProviders: ['wasm'], graphOptimizationLevel: 'all',
+  })
   // Bundled models (package, objects365) are served by the same deployment.
   // Remote weights — including a bundled model that has to fall back to its
   // cloud mirror — go through Cache Storage so a reload is instant.
@@ -201,7 +204,14 @@ async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Prom
     try {
       cache = await caches.open(CACHE_NAME)
       const hit = await cache.match(spec.url)
-      if (hit) return await hit.arrayBuffer()
+      if (hit) {
+        try {
+          return await createSession(await hit.arrayBuffer())
+        } catch {
+          // Earlier builds cached downloads before ONNX Runtime validated them.
+          await cache.delete(spec.url)
+        }
+      }
     } catch { /* Cache Storage may be disabled */ }
   }
   const attempts = [spec.url, ...(spec.mirror ? [spec.mirror] : [])]
@@ -209,10 +219,13 @@ async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Prom
   for (const url of attempts) {
     try {
       const bytes = await download(url, onProgress)
-      try { await cache?.put(spec.url, new Response(bytes.slice(0))) } catch { /* caching is best-effort */ }
-      return bytes
+      const session = await createSession(bytes)
+      if (cache && /^https?:/i.test(url)) {
+        void cache.put(spec.url, new Response(bytes)).catch(() => null)
+      }
+      return session
     } catch (error) {
-      const host = remote ? new URL(url).host : url.replace(/^\//, '')
+      const host = /^https?:/i.test(url) ? new URL(url).host : url.replace(/^\//, '')
       problems.push(`${host}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -242,8 +255,7 @@ export function ensureBrowserModel(onProgress?: Progress, model: BrowserModel = 
   ort.env.wasm.simd = true
   ort.env.logLevel = 'error'
 
-  const session = fetchModelBytes(model, onProgress)
-    .then(bytes => ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }))
+  const session = loadBrowserSession(model, onProgress)
     .then(result => {
       setState(model, 'ready')
       return result
