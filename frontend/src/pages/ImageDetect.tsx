@@ -65,11 +65,10 @@ export default function ImageDetect() {
   const [error, setError] = useState('')
   const [chosenMode, setMode] = useState<Mode | null>(null)
   const [backendModel, setBackendModel] = useState('')
-  const mode = chosenMode ?? (backendModel.includes('world') ? 'world' : backendModel && backendModel !== 'yolov8n.pt' ? 'coco' : 'broad')
-  // The Everyday-objects weights are fetched at build time and may be missing
-  // if that download failed. Probe once and start on a mode that works rather
-  // than opening on one whose model can never load.
-  const [available, setAvailable] = useState<Record<string, boolean> | null>(null)
+  const [broadAvailable, setBroadAvailable] = useState<boolean | null>(null)
+  const configuredMode = backendModel.includes('world') ? 'world'
+    : backendModel && backendModel !== 'yolov8n.pt' ? 'coco' : 'broad'
+  const mode = chosenMode ?? (configuredMode === 'broad' && broadAvailable === false ? 'coco' : configuredMode)
   const customSelected = Boolean(backendModel) && !/^yolov8[nsmlx]\.pt$/.test(backendModel)
   const [classesText, setClassesText] = useState('bus, person, traffic light')
   // Where the last result actually came from — never mislabelled.
@@ -82,9 +81,8 @@ export default function ImageDetect() {
     api.modelStatus().then(status => {
       if (mounted) setBackendModel(status.model_path?.split(/[/\\]/).pop() || '')
     }).catch(() => null)
-    void import('../lib/browserDetection').then(async m => {
-      const [coco, broad] = await Promise.all([m.isModelAvailable('coco'), m.isModelAvailable('broad')])
-      if (mounted) setAvailable({ coco, broad })
+    void import('../lib/browserDetection').then(m => m.isModelAvailable('broad')).then(available => {
+      if (mounted) setBroadAvailable(available)
     }).catch(() => null)
     return () => { mounted = false }
   }, [])
@@ -111,18 +109,25 @@ export default function ImageDetect() {
   }
   const run = async () => {
     if (!file) return
-    setMode(mode); setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus(''); setHistoryStatus('')
+    setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus(''); setHistoryStatus('')
     try {
-      const prompts = mode === 'world' ? parseDetectionPrompts(classesText) : null
+      // An upload can arrive before the availability check finishes.
+      let activeMode = mode
+      if (!chosenMode && mode === 'broad' && broadAvailable === null) {
+        const { isModelAvailable } = await import('../lib/browserDetection')
+        if (!(await isModelAvailable('broad'))) activeMode = 'coco'
+      }
+      setMode(activeMode)
+      const prompts = activeMode === 'world' ? parseDetectionPrompts(classesText) : null
       const progress = (loaded: number, total: number) => {
         if (total > 0) setModelPct(Math.min(100, Math.round(loaded / total * 100)))
       }
       const runDetector = async (): Promise<{ result: ImageResult; source: 'browser' | 'backend' }> => {
-        if (mode === 'broad' || mode === 'expanded' || mode === 'package') {
+        if (activeMode === 'broad' || activeMode === 'expanded' || activeMode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
-          return { result: await detectImageFileInBrowser(file, progress, mode, mode !== 'package' && scanSmallObjects), source: 'browser' as const }
+          return { result: await detectImageFileInBrowser(file, progress, activeMode, activeMode !== 'package' && scanSmallObjects), source: 'browser' as const }
         }
-        if (mode === 'coco' && customSelected) {
+        if (activeMode === 'coco' && customSelected) {
           if (!(await isBackendOnline())) throw new Error(`Start the Python backend to use ${backendModel}.`)
           return { result: await api.detectImage(file), source: 'backend' as const }
         }
@@ -165,13 +170,6 @@ export default function ImageDetect() {
     catch (e: any) { setError(e.message); toast(e.message, 'err') }
     finally { setBusy(false); setModelPct(null); setPromptStatus('') }
   }
-  // If the default mode's weights are missing, move to COCO (remote weights,
-  // normally available) — an explanatory line under the buttons still says so.
-  useEffect(() => {
-    if (!available || chosenMode) return
-    if (!available.broad && available.coco) setMode('coco')
-  }, [available, chosenMode])
-
   const annotatedSrc = result?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
   return (
     <>
@@ -192,7 +190,7 @@ export default function ImageDetect() {
           ))}
         </div>
         {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
-        {available?.[mode] === false && (
+        {mode === 'broad' && broadAvailable === false && (
           <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
             This mode's model weights are not reachable right now, so it cannot run.
             {' '}Use <b>COCO classes</b> or <b>Search by name</b> — both work without those files.
