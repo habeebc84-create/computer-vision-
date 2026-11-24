@@ -348,7 +348,7 @@ function decode(
     return { detections: parseRowDetections(data, dims, labels, w, h, fit, conf, iou, 0.9), peak: 0 }
   }
   return {
-    detections: parseDetections(data, w, h, fit, conf, iou, labels, dims),
+    detections: parseDetections(data, w, h, fit, conf, iou, labels, dims, spec.labels === OBJECTS365_NAMES ? 0.9 : undefined),
     peak: peakScore(data, dims, labels.length),
   }
 }
@@ -428,20 +428,10 @@ export async function detectInBrowser(
     const ys = [...new Set([0, Math.max(0, h - tileHeight)])]
     for (const y of ys) {
       for (const x of xs) {
-        if (x === 0 && y === 0) continue // already covered by the full-frame pass
-        const matches = await predict(tileWidth, tileHeight, x, y)
-        for (const match of matches) {
-          const [left, top, right, bottom] = match.bbox
-          // Boxes whose centre falls inside a neighbouring tile are kept by
-          // that tile; keeping them twice only doubles the box count.
-          const cx = (left + right) / 2
-          const cy = (top + bottom) / 2
-          if (cx < 0 || cy < 0 || cx > w || cy > h) continue
-          dets.push(match)
-        }
+        dets.push(...await predict(tileWidth, tileHeight, x, y))
       }
     }
-    dets = suppressDuplicates(dets, iou)
+    dets = suppressDuplicates(dets, iou, model === 'broad' || model === 'expanded' ? 0.9 : undefined)
   }
 
   return {

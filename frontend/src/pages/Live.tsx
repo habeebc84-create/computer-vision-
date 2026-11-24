@@ -32,7 +32,7 @@ export default function Live() {
   const [enablingNames, setEnablingNames] = useState(false)
   const [busy, setBusy] = useState(false)
   const [savingSnapshot, setSavingSnapshot] = useState(false)
-  const [mode, setMode] = useState<'coco' | 'small' | 'world'>('coco')
+  const [mode, setMode] = useState<'coco' | 'broad' | 'small' | 'world'>('coco')
   const [backendModel, setBackendModel] = useState('')
   const [autoSave, setAutoSave] = useState(() => {
     try { return localStorage.getItem('ods-auto-save-live') !== 'off' }
@@ -141,18 +141,18 @@ export default function Live() {
       const progress = (loaded: number, total: number) => {
         if (total > 0 && current()) setModelPct(Math.round(loaded / total * 100))
       }
-      const runSmallObjects = async () => {
-        const { detectInBrowser } = await import('../lib/browserDetection')
-        const result = await detectInBrowser(frame, frame.width, frame.height, progress, 'expanded', true)
-        return { result, source: 'browser' as const }
-      }
       const runBackend = async (): Promise<FrameResult> => {
         const blob = await new Promise<Blob | null>(resolve => frame.toBlob(resolve, 'image/jpeg', 0.85))
         if (!blob) throw new Error('Could not encode the camera frame.')
         return prompts ? api.openVocabFrame(blob, prompts) : api.detectFrame(blob)
       }
       const runDetection = async () => {
-        if (mode === 'small') return runSmallObjects()
+        if (mode === 'broad' || mode === 'small') {
+          const { detectInBrowser } = await import('../lib/browserDetection')
+          const model = mode === 'small' ? 'expanded' : 'broad'
+          const result = await detectInBrowser(frame, frame.width, frame.height, progress, model, mode === 'small')
+          return { result, source: 'browser' as const }
+        }
         if (mode === 'coco' && backendModelRef.current) {
           return { result: await runBackend(), source: 'backend' as const }
         }
@@ -359,6 +359,7 @@ export default function Live() {
         <p className="mt-2 text-xs text-slate-500">Camera access requires HTTPS or localhost and browser permission. If the camera is blocked in an embedded preview, <a className="underline text-sky-300" href={window.location.href} target="_blank" rel="noopener noreferrer">open this page in a new tab</a> and allow camera access. The list shows cameras available to your browser.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={mode === 'coco' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('coco')}>{backendModel ? `Backend model (${backendModel})` : 'COCO classes (80)'}</button>
+          <button className={mode === 'broad' ? 'btn-primary' : 'btn-ghost'} aria-pressed={mode === 'broad'} onClick={() => setMode('broad')}>Everyday objects (365)</button>
           <button className={mode === 'small' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('small')}>Small objects (expanded)</button>
           <button className={mode === 'world' ? 'btn-primary' : 'btn-ghost'} onClick={() => setMode('world')}><Sparkles size={15} /> Any object — type its name</button>
         </div>
@@ -387,7 +388,7 @@ export default function Live() {
           </div>
         )}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
-        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : mode === 'small' ? '~125 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
+        {modelPct !== null && <p className="mt-3 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-2 text-sm text-sky-200">Downloading {mode === 'world' ? 'open-vocab' : 'detection'} model… {modelPct}% ({mode === 'world' ? '~205 MB' : mode === 'small' ? '~125 MB' : mode === 'broad' ? '~38 MB' : '~12 MB'}, once only — it is cached in your browser after that).</p>}
         {running && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
         {source === 'browser' && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">Detection runs in your browser. Use Save snapshot to keep this result immediately.</p>}
         <div ref={stageRef} className="relative mt-4 max-h-[75vh] w-full overflow-hidden rounded-xl border border-white/10 bg-black aspect-video" style={streamAspect ? { aspectRatio: String(streamAspect) } : undefined}>
