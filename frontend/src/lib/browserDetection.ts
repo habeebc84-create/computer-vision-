@@ -43,7 +43,14 @@ const models: Record<'coco' | 'broad' | 'expanded' | 'package', ModelSpec> = {
   broad: {
     // Built by scripts/prepare-image-model.mjs from the pinned OpenAI/PP-YOLOE
     // Objects365 export (1x3x640x640 → 1x369x8400, 365 classes + 4 box rows).
-    url: import.meta.env.BASE_URL + 'models/objects365.onnx', labels: OBJECTS365_NAMES,
+    // The file is git-ignored and fetched at build time, which is best-effort:
+    // when that download did not run the bundled URL is missing. The mirror is
+    // the same pinned, CORS-enabled file on Hugging Face, so the browser can
+    // still download these weights at runtime instead of leaving the 365-class
+    // mode permanently unusable.
+    url: import.meta.env.BASE_URL + 'models/objects365.onnx',
+    mirror: 'https://huggingface.co/wide-video/yoloe-11-Objects365-v1.0.0/resolve/93d84d557920494a1070fe0dbd71a87be339d89a/yoloe-11s-seg-object365.onnx',
+    labels: OBJECTS365_NAMES,
     size: MODEL_INPUT_SIZE, layout: 'yolo', resize: 'letterbox', engine: 'YOLOE · Objects365 (365 classes)',
   },
   expanded: {
@@ -76,18 +83,24 @@ export async function isModelAvailable(model: BrowserModel): Promise<boolean> {
   const known = availability.get(model)
   if (known !== undefined) return known
   const spec = models[model]
+  // Probe the bundled file first, then the mirror: a deployment whose
+  // build-time download did not run still has working weights if the mirror
+  // is reachable, and the mode must not be reported as unusable then.
   let ok = false
-  try {
-    // A ranged GET is cheap even on a 12-38 MB file and works where HEAD is
-    // not allowed by the host.
-    const response = await fetch(spec.url, { headers: { Range: 'bytes=0-15' } })
-    const type = response.headers.get('content-type') || ''
-    if (response.ok && !type.includes('text/html')) {
-      const head = new Uint8Array(await response.arrayBuffer())
-      // ONNX protobufs never start with '<' (an HTML page) or '{'.
-      ok = head.length > 0 && head[0] !== 0x3c && head[0] !== 0x7b
-    }
-  } catch { ok = false }
+  for (const url of [spec.url, ...(spec.mirror ? [spec.mirror] : [])]) {
+    try {
+      // A ranged GET is cheap even on a 12-38 MB file and works where HEAD is
+      // not allowed by the host.
+      const response = await fetch(url, { headers: { Range: 'bytes=0-15' } })
+      const type = response.headers.get('content-type') || ''
+      if (response.ok && !type.includes('text/html')) {
+        const head = new Uint8Array(await response.arrayBuffer())
+        // ONNX protobufs never start with '<' (an HTML page) or '{'.
+        ok = head.length > 0 && head[0] !== 0x3c && head[0] !== 0x7b
+      }
+    } catch { ok = false }
+    if (ok) break
+  }
   availability.set(model, ok)
   return ok
 }
@@ -179,10 +192,12 @@ async function download(url: string, onProgress?: Progress): Promise<ArrayBuffer
 async function fetchModelBytes(model: BrowserModel, onProgress?: Progress): Promise<ArrayBuffer> {
   const spec = models[model]
   // Bundled models (package, objects365) are served by the same deployment.
-  // Remote weights go through Cache Storage so a reload is instant.
+  // Remote weights — including a bundled model that has to fall back to its
+  // cloud mirror — go through Cache Storage so a reload is instant.
   const remote = /^https?:/i.test(spec.url)
+  const cacheable = remote || Boolean(spec.mirror)
   let cache: Cache | undefined
-  if (remote) {
+  if (cacheable) {
     try {
       cache = await caches.open(CACHE_NAME)
       const hit = await cache.match(spec.url)
