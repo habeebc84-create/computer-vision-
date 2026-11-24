@@ -27,11 +27,7 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
     api.health().then(() => setBackend('online')).catch(() => setBackend('offline'))
     api.modelStatus().then(setModel).catch(() => null)
   }, [page])
-  // In-browser model state — the header badge used to read only the backend,
-  // so it said "Model not loaded" forever when the backend was offline, even
-  // after the browser model had loaded and detection worked. When the backend
-  // is offline, preload the browser model in the background and track its real
-  // state (dynamic import so onnxruntime-web stays out of the main bundle).
+  // Observe COCO status without loading it before the user picks a detector.
   const [browserModel, setBrowserModel] = useState<{ state: string; error: string }>({ state: 'not-downloaded', error: '' })
   useEffect(() => {
     if (backend !== 'offline') return
@@ -41,7 +37,6 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
       if (cancelled) return
       setBrowserModel(m.getBrowserModelState())
       unsub = m.subscribeBrowserModelState(setBrowserModel)
-      m.ensureBrowserModel().catch(() => null) // failures surface via subscription
     }).catch(() => null)
     return () => { cancelled = true; unsub?.() }
   }, [backend])

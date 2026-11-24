@@ -35,7 +35,6 @@ export default function Dashboard({ go }: { go: (p: PageId) => void }) {
       if (cancelled) return
       setBrowserModel(m.getBrowserModelState())
       unsub = m.subscribeBrowserModelState(setBrowserModel)
-      m.ensureBrowserModel().catch(() => null) // failures surface via subscription
     }).catch(() => null)
     return () => { cancelled = true; unsub?.() }
   }, [backendOffline])
