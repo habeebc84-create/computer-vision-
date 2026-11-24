@@ -452,9 +452,20 @@ export async function detectInBrowser(
     const ys = [...new Set([0, Math.max(0, h - tileHeight)])]
     for (const y of ys) {
       for (const x of xs) {
-        dets.push(...await predict(tileWidth, tileHeight, x, y))
+        const matches = await predict(tileWidth, tileHeight, x, y)
+        for (const match of matches) {
+          const [left, top, right, bottom] = match.bbox
+          // A crop can place a box partly outside the photo; its centre must
+          // still land inside the frame or it is a tiled-scan artefact.
+          const cx = (left + right) / 2
+          const cy = (top + bottom) / 2
+          if (cx < 0 || cy < 0 || cx > w || cy > h) continue
+          dets.push(match)
+        }
       }
     }
+    // Broad vocabularies often give nearly identical boxes competing labels
+    // (sneaker vs boot), so suppress those across the full-frame and tile passes.
     dets = suppressDuplicates(dets, iou, model === 'broad' || model === 'expanded' ? 0.9 : undefined)
   }
 
