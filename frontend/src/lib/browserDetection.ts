@@ -68,46 +68,6 @@ const models: Record<'coco' | 'broad' | 'expanded' | 'package', ModelSpec> = {
 }
 export type BrowserModel = keyof typeof models
 
-export function modelLabel(model: BrowserModel) { return models[model].engine }
-
-const availability = new Map<BrowserModel, boolean>()
-
-/**
- * Whether this model's weights are actually reachable from the deployment.
- * Bundled models (package, objects365) are only present if the build fetched
- * them, and a missing file on a static host can answer 200 with the app's
- * index.html — both are checked here, so the UI can offer a mode that works
- * instead of failing on a dead link.
- */
-export async function isModelAvailable(model: BrowserModel): Promise<boolean> {
-  const known = availability.get(model)
-  if (known !== undefined) return known
-  const spec = models[model]
-  // Probe the bundled file first, then the mirror: a deployment whose
-  // build-time download did not run still has working weights if the mirror
-  // is reachable, and the mode must not be reported as unusable then.
-  let ok = false
-  for (const url of [spec.url, ...(spec.mirror ? [spec.mirror] : [])]) {
-    try {
-      // A ranged GET is cheap even on a 12-38 MB file and works where HEAD is
-      // not allowed by the host.
-      const response = await fetch(url, { headers: { Range: 'bytes=0-15' } })
-      const type = response.headers.get('content-type') || ''
-      if (response.ok && !type.includes('text/html')) {
-        const head = new Uint8Array(await response.arrayBuffer())
-        // ONNX protobufs never start with '<' (an HTML page) or '{'.
-        ok = head.length > 0 && head[0] !== 0x3c && head[0] !== 0x7b
-      }
-    } catch { ok = false }
-    if (ok) break
-  }
-  availability.set(model, ok)
-  return ok
-}
-
-/** Forget cached availability probes (used after a retry). */
-export function resetModelAvailability() { availability.clear() }
-
 type Progress = (loaded: number, total: number) => void
 const sessions = new Map<BrowserModel, Promise<ort.InferenceSession>>()
 
@@ -162,31 +122,49 @@ function resolveModelUrl(spec: ModelSpec) {
   return spec.url
 }
 
+const MODEL_DOWNLOAD_IDLE_MS = 15_000
+
 async function download(url: string, onProgress?: Progress): Promise<ArrayBuffer> {
-  const response = await fetch(url, { mode: 'cors' })
-  if (!response.ok || !response.body) {
-    throw new Error(`HTTP ${response.status}`)
+  const controller = new AbortController()
+  const startTimeout = () => setTimeout(() => controller.abort(), MODEL_DOWNLOAD_IDLE_MS)
+  let timeout = startTimeout()
+  try {
+    const response = await fetch(url, { mode: 'cors', signal: controller.signal })
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
+    if (response.headers.get('content-type')?.includes('text/html')) {
+      throw new Error('the server returned a web page instead of model weights')
+    }
+
+    const total = Number(response.headers.get('content-length')) || 0
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let loaded = 0
+    onProgress?.(0, total)
+    for (;;) {
+      clearTimeout(timeout)
+      timeout = startTimeout()
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      loaded += value.length
+      onProgress?.(loaded, total)
+    }
+    if (!loaded) throw new Error('the download was empty')
+    const bytes = new Uint8Array(loaded)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.length
+    }
+    return bytes.buffer
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('the model download stopped responding')
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    // Cancel any remaining response body, including unexpected error pages.
+    controller.abort()
   }
-  // A static host serving index.html for a missing file looks like a 200 but
-  // is never a valid ONNX graph — reject it early with a useful message.
-  const type = response.headers.get('content-type') || ''
-  if (type.includes('text/html')) throw new Error('the server returned a web page instead of model weights')
-  const total = Number(response.headers.get('content-length')) || 0
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let loaded = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    loaded += value.length
-    onProgress?.(loaded, total)
-  }
-  if (!loaded) throw new Error('the download was empty')
-  const bytes = new Uint8Array(loaded)
-  let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
-  return bytes.buffer
 }
 
 async function loadBrowserSession(model: BrowserModel, onProgress?: Progress): Promise<ort.InferenceSession> {
@@ -269,6 +247,23 @@ export function ensureBrowserModel(onProgress?: Progress, model: BrowserModel = 
   return session
 }
 
+// Share the fallback across a video or webcam session so a failed model
+// download does not stall every frame. A new run can retry after the cooldown.
+let everydayRetryAt = 0
+
+async function resolveDetectionModel(requested: BrowserModel, onProgress?: Progress): Promise<BrowserModel> {
+  if (requested !== 'broad') return requested
+  if (Date.now() >= everydayRetryAt) {
+    try {
+      await ensureBrowserModel(onProgress, 'broad')
+      return 'broad'
+    } catch {
+      everydayRetryAt = Date.now() + 60_000
+    }
+  }
+  return 'coco'
+}
+
 /**
  * ONNX Runtime tells us the input size it wants when a tensor has the wrong
  * shape ("... index: 2 Got: 640 Expected: 320"). Use that to correct the
@@ -318,6 +313,7 @@ export interface BrowserDetectResult {
   fps: number
   annotatedDataUrl: string
   engine?: string
+  modelNotice?: string
   source: 'browser'
   /** Highest candidate score seen, even if below the threshold. */
   peak_confidence?: number
@@ -390,9 +386,10 @@ export async function detectInBrowser(
   w: number,
   h: number,
   onProgress?: Progress,
-  model: BrowserModel = 'coco',
+  requestedModel: BrowserModel = 'coco',
   scanSmallObjects = false,
 ): Promise<BrowserDetectResult> {
+  const model = await resolveDetectionModel(requestedModel, onProgress)
   const spec = models[model]
   const [session, labels] = await Promise.all([
     ensureBrowserModel(onProgress, model),
@@ -476,6 +473,7 @@ export async function detectInBrowser(
     ...summarise(dets, inferenceMs),
     annotatedDataUrl: annotate(source, w, h, dets),
     engine: spec.engine,
+    modelNotice: model !== requestedModel ? 'Everyday objects could not load. Using COCO classes (80).' : undefined,
     source: 'browser',
     peak_confidence: Math.round(peak * 10000) / 10000,
     conf_threshold: conf,

@@ -8,7 +8,7 @@ import { DetectionTable } from '../components/ui'
 import { COCO_NAMES } from '../lib/yoloPost'
 
 type Mode = 'broad' | 'expanded' | 'package' | 'coco' | 'world'
-type ImageResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine' | 'peak_confidence' | 'conf_threshold'>> & { prompts?: string[] }
+type ImageResult = DetectResult & Partial<Pick<BrowserDetectResult, 'annotatedDataUrl' | 'engine' | 'modelNotice' | 'peak_confidence' | 'conf_threshold'>> & { prompts?: string[] }
 
 const COCO_GROUPS: { title: string; items: string[] }[] = [
   { title: 'People', items: ['person'] },
@@ -65,11 +65,9 @@ export default function ImageDetect() {
   const [error, setError] = useState('')
   const [chosenMode, setMode] = useState<Mode | null>(null)
   const [backendModel, setBackendModel] = useState('')
-  const mode = chosenMode ?? (backendModel.includes('world') ? 'world' : backendModel && backendModel !== 'yolov8n.pt' ? 'coco' : 'broad')
-  // The Everyday-objects weights are fetched at build time and may be missing
-  // if that download failed. Probe once and start on a mode that works rather
-  // than opening on one whose model can never load.
-  const [available, setAvailable] = useState<Record<string, boolean> | null>(null)
+  const configuredMode = backendModel.includes('world') ? 'world'
+    : backendModel && backendModel !== 'yolov8n.pt' ? 'coco' : 'broad'
+  const mode = chosenMode ?? configuredMode
   const customSelected = Boolean(backendModel) && !/^yolov8[nsmlx]\.pt$/.test(backendModel)
   const [classesText, setClassesText] = useState('bus, person, traffic light')
   // Where the last result actually came from — never mislabelled.
@@ -81,10 +79,6 @@ export default function ImageDetect() {
     let mounted = true
     api.modelStatus().then(status => {
       if (mounted) setBackendModel(status.model_path?.split(/[/\\]/).pop() || '')
-    }).catch(() => null)
-    void import('../lib/browserDetection').then(async m => {
-      const [coco, broad] = await Promise.all([m.isModelAvailable('coco'), m.isModelAvailable('broad')])
-      if (mounted) setAvailable({ coco, broad })
     }).catch(() => null)
     return () => { mounted = false }
   }, [])
@@ -113,26 +107,17 @@ export default function ImageDetect() {
     if (!file) return
     setBusy(true); setResult(null); setSource(null); setError(''); setModelPct(null); setPromptStatus(''); setHistoryStatus('')
     try {
-      // A photo can be submitted before the availability probe finishes. Check
-      // both models now and start on COCO if the default weights cannot load.
-      let activeMode = mode
-      if (!chosenMode && mode === 'broad' && available === null) {
-        const { isModelAvailable } = await import('../lib/browserDetection')
-        const [coco, broad] = await Promise.all([isModelAvailable('coco'), isModelAvailable('broad')])
-        setAvailable({ coco, broad })
-        if (!broad && coco) activeMode = 'coco'
-      }
-      setMode(activeMode)
-      const prompts = activeMode === 'world' ? parseDetectionPrompts(classesText) : null
+      setMode(mode)
+      const prompts = mode === 'world' ? parseDetectionPrompts(classesText) : null
       const progress = (loaded: number, total: number) => {
         if (total > 0) setModelPct(Math.min(100, Math.round(loaded / total * 100)))
       }
       const runDetector = async (): Promise<{ result: ImageResult; source: 'browser' | 'backend' }> => {
-        if (activeMode === 'broad' || activeMode === 'expanded' || activeMode === 'package') {
+        if (mode === 'broad' || mode === 'expanded' || mode === 'package') {
           const { detectImageFileInBrowser } = await import('../lib/browserDetection')
-          return { result: await detectImageFileInBrowser(file, progress, activeMode, activeMode !== 'package' && scanSmallObjects), source: 'browser' as const }
+          return { result: await detectImageFileInBrowser(file, progress, mode, mode !== 'package' && scanSmallObjects), source: 'browser' as const }
         }
-        if (activeMode === 'coco' && customSelected) {
+        if (mode === 'coco' && customSelected) {
           if (!(await isBackendOnline())) throw new Error(`Start the Python backend to use ${backendModel}.`)
           return { result: await api.detectImage(file), source: 'backend' as const }
         }
@@ -156,7 +141,7 @@ export default function ImageDetect() {
         setHistoryStatus('Saving…')
         try {
           await saveBrowserHistory({
-            inputType: activeMode === 'world' ? 'open-vocab' : 'image',
+            inputType: mode === 'world' ? 'open-vocab' : 'image',
             count: r.count,
             classes: r.unique_classes,
             avgConfidence: r.avg_confidence,
@@ -175,13 +160,6 @@ export default function ImageDetect() {
     catch (e: any) { setError(e.message); toast(e.message, 'err') }
     finally { setBusy(false); setModelPct(null); setPromptStatus('') }
   }
-  // If the default mode's weights are missing, move to COCO (remote weights,
-  // normally available) — an explanatory line under the buttons still says so.
-  useEffect(() => {
-    if (!available || chosenMode) return
-    if (!available.broad && available.coco) setMode('coco')
-  }, [available, chosenMode])
-
   const annotatedSrc = result?.annotatedDataUrl || (result?.annotated_url ? resolveUrl(result.annotated_url) : '')
   return (
     <>
@@ -202,13 +180,6 @@ export default function ImageDetect() {
           ))}
         </div>
         {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
-        {available?.[mode] === false && (
-          <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            This mode's model weights are not reachable right now, so it cannot run.
-            {' '}Use <b>COCO classes</b> or <b>Search by name</b> — both work without those files.
-            {' '}Check your connection and reload to try these weights again.
-          </p>
-        )}
         {(mode === 'broad' || mode === 'expanded') && (
           <label className="mb-3 flex items-start gap-2 text-sm text-slate-300">
             <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-400" checked={scanSmallObjects}
@@ -242,6 +213,7 @@ export default function ImageDetect() {
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p role="status" className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}%</p>}
         {busy && promptStatus && <p className="mt-3 rounded-xl bg-violet-500/10 border border-violet-500/30 px-3 py-2 text-sm text-violet-200">{promptStatus} Open-vocab checks one object at a time — each takes several seconds.</p>}
+        {result?.modelNotice && <p role="status" className="mt-3 text-sm text-amber-200">{result.modelNotice}</p>}
         {source === 'browser' && <p className="mt-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-200">Detection ran in your browser.</p>}
         {preview && (
           <div className="mt-4">

@@ -130,6 +130,7 @@ export default function VideoDetect() {
             </div>
             {samples[selected] && <>
               <img className="w-full rounded-xl" alt="Annotated video frame" src={samples[selected].result.annotatedDataUrl} />
+              {samples[selected].result.modelNotice && <p role="status" className="text-sm text-amber-200">{samples[selected].result.modelNotice}</p>}
               <DetectionTable dets={samples[selected].result.detections} />
             </>}
           </div>
