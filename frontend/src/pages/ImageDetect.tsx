@@ -192,8 +192,9 @@ export default function ImageDetect() {
         {mode === 'broad' && <p className="my-3 text-sm text-slate-400">Search for 365 categories in your browser, including lamps, shoes, signs and tools.</p>}
         {mode === 'broad' && broadAvailable === false && (
           <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            This mode's model weights are not available on this deployment, so it cannot run right now.
+            This mode's model weights are not reachable right now, so it cannot run.
             {' '}Use <b>COCO classes</b> or <b>Search by name</b> — both work without those files.
+            {' '}Check your connection and reload to try these weights again.
           </p>
         )}
         {(mode === 'broad' || mode === 'expanded') && (
