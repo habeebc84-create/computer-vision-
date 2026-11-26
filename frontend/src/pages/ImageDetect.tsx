@@ -204,11 +204,11 @@ export default function ImageDetect() {
         <label onDragOver={event => event.preventDefault()} onDrop={event => {
           event.preventDefault()
           pick(event.dataTransfer.files[0])
-        }} className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-10 text-center hover:border-sky-500/50">
+        }} className="relative flex cursor-pointer focus-within:ring-2 focus-within:ring-indigo-300 flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-10 text-center hover:border-sky-500/50">
           <ImagePlus size={28} className="text-sky-400" />
           <span className="mt-2 font-semibold">Drop an image here, or click to browse</span>
           <span className="text-xs text-slate-400">JPG / PNG / WebP / GIF / BMP / AVIF · up to 20 MB</span>
-          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="hidden" disabled={busy} onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/avif" className="sr-only" disabled={busy} onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
         </label>
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
         {modelPct !== null && <p role="status" className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">Downloading detection model… {modelPct}%</p>}

@@ -21,7 +21,35 @@ export interface AvailableModel { id: string; path: string; kind: 'coco' | 'worl
  * backend), set VITE_API_URL to the backend's URL, e.g. http://localhost:8000
  * or https://my-backend.onrender.com — then rebuild and redeploy.
  */
-export const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+const BACKEND_KEY = 'ods-backend-url'
+const defaultBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+export const API_BASE: string = (() => {
+  try { return localStorage.getItem(BACKEND_KEY) || defaultBase }
+  catch { return defaultBase }
+})()
+
+export function restoreBackend() {
+  localStorage.removeItem(BACKEND_KEY)
+  window.location.reload()
+}
+
+export async function connectBackend(input: string) {
+  const url = new URL(input)
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  if ((url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+      url.username || url.password || url.search || url.hash) {
+    throw new Error('Enter an HTTPS backend URL or a local server address.')
+  }
+  const base = url.href.replace(/\/+$/, '')
+  const health = await req<{ status: string; model_loaded: boolean }>(base + '/api/health', {
+    signal: AbortSignal.timeout(20000),
+  })
+  if (health?.status !== 'ok' || typeof health.model_loaded !== 'boolean') {
+    throw new Error('This address did not return an object detection backend.')
+  }
+  localStorage.setItem(BACKEND_KEY, base)
+  window.location.reload()
+}
 
 /** Prefix a backend-served path (/outputs/..., /dataset/..., /api/...) with API_BASE. */
 export function resolveUrl(u: string): string {

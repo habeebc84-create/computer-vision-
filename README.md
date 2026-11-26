@@ -99,7 +99,9 @@ sessions, and saved webcam snapshots from this browser. Records saved in this
 browser stay in its site storage. Connect a backend for training, dataset
 management, full-frame video export, and server reports.
 
-To connect the Vercel frontend to a backend:
+To connect just this browser, open **Settings → Backend connection**, enter your Python server URL, and choose **Connect backend**. The app verifies its health endpoint before saving the address on this device. **Use deployment default** clears that override.
+
+To configure a backend for everyone on the Vercel deployment:
 
 1. Host the backend on a persistent Python host — Render, Railway or Fly.io
    (a web service running `python run.py`, with the repo's `requirements.txt`;

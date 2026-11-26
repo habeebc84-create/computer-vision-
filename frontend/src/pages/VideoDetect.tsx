@@ -5,7 +5,7 @@ import { saveBrowserHistory } from '../lib/browserHistory'
 import { DetectionTable } from '../components/ui'
 import type { VideoSample } from '../lib/browserVideo'
 
-export default function VideoDetect() {
+export default function VideoDetect({ online }: { online: boolean | null }) {
   const [file, setFile] = useState<File | null>(null)
   const [job, setJob] = useState<any>(null)
   const [busy, setBusy] = useState(false)
@@ -102,13 +102,13 @@ export default function VideoDetect() {
         <fieldset className="mb-4 flex flex-wrap gap-2">
           <legend className="label">Processing mode</legend>
           <button type="button" disabled={busy} aria-pressed={mode === 'browser'} className={mode === 'browser' ? 'btn-primary' : 'btn-ghost'} onClick={() => { setMode('browser'); clearResults() }}>Browser · 365 categories</button>
-          <button type="button" disabled={busy} aria-pressed={mode === 'backend'} className={mode === 'backend' ? 'btn-primary' : 'btn-ghost'} onClick={() => { setMode('backend'); clearResults() }}>Backend · all frames</button>
+          <button type="button" disabled={busy || !online} title={online ? undefined : 'Connect a server in Settings for full-frame processing'} aria-pressed={mode === 'backend'} className={mode === 'backend' ? 'btn-primary' : 'btn-ghost'} onClick={() => { setMode('backend'); clearResults() }}>Backend · all frames</button>
         </fieldset>
-        <label onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); pick(event.dataTransfer.files[0]) }} className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-10 text-center hover:border-sky-500/50">
+        <label onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); pick(event.dataTransfer.files[0]) }} className="relative flex cursor-pointer focus-within:ring-2 focus-within:ring-indigo-300 flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-10 text-center hover:border-sky-500/50">
           <FileVideo size={28} className="text-sky-400" />
           <span className="mt-2 font-semibold">Drop a video here, or click to browse</span>
           <span className="text-xs text-slate-400">MP4 / WebM / MOV / AVI · up to 100 MB</span>
-          <input type="file" accept=".mp4,.webm,.mov,.avi,video/mp4,video/webm,video/quicktime" className="hidden" disabled={busy} onChange={event => { pick(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
+          <input type="file" accept=".mp4,.webm,.mov,.avi,video/mp4,video/webm,video/quicktime" className="sr-only" disabled={busy} onChange={event => { pick(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
         </label>
         {file && <p className="mt-3 text-sm text-slate-300">Selected: <b>{file.name}</b> · {(file.size / 1048576).toFixed(1)} MB</p>}
         {error && <p className="mt-3 rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</p>}
