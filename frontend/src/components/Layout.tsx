@@ -17,29 +17,15 @@ export const NAV: { id: PageId; label: string; icon: LucideIcon; group: string }
   { id: 'settings', label: 'Settings', icon: SettingsIcon, group: 'System' },
 ]
 
-export function Layout({ page, setPage, children }: { page: PageId; setPage: (p: PageId) => void; children: React.ReactNode }) {
+export function Layout({ online, page, setPage, children }: { online: boolean | null; page: PageId; setPage: (p: PageId) => void; children: React.ReactNode }) {
   const menu = useRef<HTMLDialogElement>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [model, setModel] = useState<ModelStatus | null>(null)
-  // Real backend reachability — never faked: 'checking' until /api/health answers.
-  const [backend, setBackend] = useState<'checking' | 'online' | 'offline'>('checking')
   useEffect(() => {
-    api.health().then(() => setBackend('online')).catch(() => setBackend('offline'))
-    api.modelStatus().then(setModel).catch(() => null)
-  }, [page])
-  // Observe COCO status without loading it before the user picks a detector.
-  const [browserModel, setBrowserModel] = useState<{ state: string; error: string }>({ state: 'not-downloaded', error: '' })
-  useEffect(() => {
-    if (backend !== 'offline') return
-    let unsub: (() => void) | null = null
-    let cancelled = false
-    import('../lib/browserDetection').then(m => {
-      if (cancelled) return
-      setBrowserModel(m.getBrowserModelState())
-      unsub = m.subscribeBrowserModelState(setBrowserModel)
-    }).catch(() => null)
-    return () => { cancelled = true; unsub?.() }
-  }, [backend])
+    let active = true
+    if (online) api.modelStatus().then(value => { if (active) setModel(value) }).catch(() => {})
+    return () => { active = false }
+  }, [online, page])
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 1024px)')
     const closeOnDesktop = () => { if (desktop.matches) menu.current?.close() }
@@ -47,9 +33,7 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
     return () => desktop.removeEventListener('change', closeOnDesktop)
   }, [])
   const label = NAV.find(item => item.id === page)?.label
-  const modelName = backend === 'offline' ? 'yolov8n.onnx' : model?.model_path?.split(/[\\/]/).pop() || 'yolov8n.pt'
-  const browserStates: Record<string, string> = { ready: 'Ready', downloading: 'Loading…', error: 'Failed to load' }
-  const modelState = backend === 'offline' ? browserStates[browserModel.state] || 'Not loaded' : model?.loaded ? 'Ready' : 'Not loaded'
+  const modelName = online ? model?.model_path?.split(/[\\/]/).pop() || 'Backend detector' : 'Browser detection'
   const choose = (id: PageId) => {
     menu.current?.close()
     setPage(id)
@@ -80,7 +64,7 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
         <Cpu size={16} className="mt-0.5 shrink-0 text-indigo-300" />
         <div className="min-w-0 text-xs">
           <p className="truncate font-semibold text-slate-200" title={modelName}>{modelName}</p>
-          <p className="mt-1 text-slate-400" title={browserModel.error || undefined}>{backend === 'checking' ? 'Checking…' : `${modelState} · ${backend === 'offline' ? 'Browser' : model?.device || 'Backend'}`}</p>
+          <p className="mt-1 text-slate-400" >{online === null ? 'Checking connection…' : online ? model?.device || 'Server' : 'Image, live and video'}</p>
         </div>
       </div>}
     </div>
@@ -101,8 +85,8 @@ export function Layout({ page, setPage, children }: { page: PageId; setPage: (p:
             </button>
             <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight sm:text-xl">{label}</h1>
             <span role="status" className="ml-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 px-2.5 py-1.5 text-xs text-slate-300 sm:px-3">
-              <span className={`h-2 w-2 rounded-full ${backend === 'online' ? 'bg-emerald-400' : backend === 'offline' ? 'bg-amber-400' : 'bg-slate-400'}`} />
-              {backend === 'online' ? 'Connected' : backend === 'offline' ? 'Backend offline' : 'Checking…'}
+              <span className={`h-2 w-2 rounded-full ${online === true ? 'bg-emerald-400' : online === false ? 'bg-sky-400' : 'bg-slate-400'}`} />
+              {online === true ? 'Connected' : online === false ? 'Browser mode' : 'Checking…'}
             </span>
           </div>
         </header>
